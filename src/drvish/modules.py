@@ -199,7 +199,7 @@ class NBVAE(nn.Module):
         z_dim: int = 8,
         n_layers: int = 3,
         n_hidden: int = 64,
-        use_cuda: bool = False
+        use_cuda: bool = False,
     ):
         super(NBVAE, self).__init__()
         self.encoder = Encoder(n_input, z_dim, n_layers=n_layers, n_hidden=n_hidden)
@@ -280,7 +280,7 @@ class BinomVAE(nn.Module):
         z_dim: int = 8,
         n_layers: int = 3,
         n_hidden: int = 64,
-        use_cuda: bool = False
+        use_cuda: bool = False,
     ):
         super(BinomVAE, self).__init__()
         self.encoder = Encoder(n_input, z_dim, n_layers=n_layers, n_hidden=n_hidden)

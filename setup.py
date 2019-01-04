@@ -14,6 +14,7 @@ def read(*names, **kwargs):
         encoding=kwargs.get("encoding", "utf8"),
     ).read()
 
+
 setuptools.setup(
     name="drvish",
     version="0.0.1",
@@ -29,6 +30,6 @@ setuptools.setup(
         os.path.splitext(os.path.basename(path))[0] for path in glob.glob("src/*.py")
     ],
     zip_safe=False,
-    install_requires=["numpy", "torch", "pyro-ppl"],
+    install_requires=["numpy", "torch", "pyro-ppl", "simscity"],
     extras_require={"dev": ["pytest", "black", "pre-commit"]},
 )
