@@ -28,5 +28,5 @@ git clone https://github.com/czbiohub/simscity.git
 cd ${HOME}
 
 git clone https://github.com/czbiohub/drvish.git
-(cd simscity && python setup.py install)
+(cd drvish && python setup.py install)
 cd ${HOME}
