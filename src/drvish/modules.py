@@ -161,7 +161,11 @@ class PoissonDecoder(nn.Module):
     ):
         super(PoissonDecoder, self).__init__()
         self.decoder = FCLayers(
-            n_in=n_input, n_out=n_hidden, n_layers=n_layers, n_hidden=n_hidden
+            n_input=n_input,
+            n_output=n_hidden,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
         )
         self.px_scale_decoder = nn.Sequential(
             nn.Linear(n_hidden, n_output), nn.Softmax(dim=-1)
@@ -183,7 +187,11 @@ class BinomDecoder(nn.Module):
     ):
         super(BinomDecoder, self).__init__()
         self.decoder = FCLayers(
-            n_input=n_input, n_output=n_hidden, n_layers=n_layers, n_hidden=n_hidden
+            n_input=n_input,
+            n_output=n_hidden,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
         )
         self.px_logit_decoder = nn.Linear(n_hidden, n_output)
 
@@ -200,11 +208,14 @@ class NBVAE(nn.Module):
         n_layers: int = 3,
         n_hidden: int = 64,
         use_cuda: bool = False,
+        eps: float = 1e-8,
     ):
         super(NBVAE, self).__init__()
         self.encoder = Encoder(n_input, z_dim, n_layers=n_layers, n_hidden=n_hidden)
         self.l_encoder = Encoder(n_input, 1, n_layers=1, n_hidden=n_hidden)
         self.decoder = NBDecoder(z_dim, n_input, n_layers=n_layers, n_hidden=n_hidden)
+
+        self.eps = torch.tensor(eps)
 
         if use_cuda:
             # calling cuda() here will put all the parameters of
@@ -242,7 +253,7 @@ class NBVAE(nn.Module):
                 pyro.sample(
                     "obs",
                     dist.NegativeBinomial(
-                        total_count=torch.exp(px_r) + 1e-8,
+                        total_count=torch.exp(px_r) + self.eps,
                         logits=px_logit,
                         validate_args=True,
                     ).to_event(1),
