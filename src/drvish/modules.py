@@ -3,13 +3,16 @@
 
 import collections
 
-import numpy as np
 import torch
 import torch.nn as nn
+
+from torch.nn.functional import softplus
 
 import pyro
 import pyro.distributions as dist
 import pyro.poutine as poutine
+
+import drvish.util
 
 
 # class for creating a bunch of fully connected layers
@@ -88,9 +91,6 @@ class Encoder(nn.Module):
         q_v = torch.exp(torch.clamp(self.var_encoder(q), -5, 5))
 
         return q_m, q_v
-
-
-softplus = nn.Softplus()
 
 
 class NBDecoder(nn.Module):
@@ -172,7 +172,9 @@ class PoissonDecoder(nn.Module):
         )
 
     def forward(self, z, library):
-        px_rate = softplus(torch.exp(library) * self.px_scale_decoder(self.decoder(z)))
+        px_rate = softplus(
+            torch.exp(library) * self.px_scale_decoder(self.decoder(z))
+        )
         return px_rate
 
 
@@ -199,6 +201,16 @@ class BinomDecoder(nn.Module):
         return self.px_logit_decoder(self.decoder(z))
 
 
+class LinearMultiBias(nn.Module):
+    def __init__(self, p, d, c):
+        super(LinearMultiBias, self).__init__()
+        self.linear = nn.Linear(p, d, bias=False)
+        self.biases = nn.Parameter(torch.Tensor(c, d))
+
+    def forward(self, x):
+        return self.linear(x)[:, None, :] + self.biases
+
+
 class NBVAE(nn.Module):
     def __init__(
         self,
@@ -215,7 +227,7 @@ class NBVAE(nn.Module):
         self.l_encoder = Encoder(n_input, 1, n_layers=1, n_hidden=n_hidden)
         self.decoder = NBDecoder(z_dim, n_input, n_layers=n_layers, n_hidden=n_hidden)
 
-        self.eps = torch.tensor(eps)
+        self.eps = torch.tensor(eps, requires_grad=False)
 
         if use_cuda:
             # calling cuda() here will put all the parameters of
@@ -328,7 +340,7 @@ class BinomVAE(nn.Module):
                 pyro.sample(
                     "obs",
                     dist.Binomial(
-                        total_count=x_count, logits=px_logits, validate_args=True
+                        total_count=x_count, logits=px_logit, validate_args=True
                     ).to_event(1),
                     obs=x,
                 )
@@ -346,4 +358,146 @@ class BinomVAE(nn.Module):
                 pyro.sample(
                     "latent",
                     dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
+                )
+
+
+class DRNBVAE(nn.Module):
+    # an NBVAE with a dose-response module attached
+
+    def __init__(
+        self,
+        *,
+        n_input: int,
+        n_drugs: int,
+        n_conditions: int,
+        z_dim: int = 8,
+        n_layers: int = 3,
+        n_hidden: int = 64,
+        lam_scale: float = 5.0,
+        use_cuda: bool = False,
+        eps: float = 1e-8,
+    ):
+        super(DRNBVAE, self).__init__()
+        # create the encoder and decoder networks
+        self.encoder = Encoder(n_input, z_dim, n_layers=n_layers, n_hidden=n_hidden)
+        self.l_encoder = Encoder(n_input, 1, n_layers=1, n_hidden=n_hidden)
+        self.decoder = NBDecoder(z_dim, n_input, n_layers=n_layers, n_hidden=n_hidden)
+
+        self.lmb = LinearMultiBias(z_dim, n_drugs, n_conditions)
+
+        self.eps = torch.tensor(eps, requires_grad=False)
+
+        if use_cuda:
+            # calling cuda() here will put all the parameters of
+            # the encoder and decoder networks into gpu memory
+            self.cuda()
+
+        self.use_cuda = use_cuda
+        self.z_dim = z_dim
+        self.n_drugs = n_drugs
+        self.n_conditions = n_conditions
+
+        # to get a tensor on the right device
+        x = self.lmb.biases
+
+        self.prior = {
+            "linear.weight": dist.Laplace(
+                x.new_zeros((n_drugs, z_dim)), lam_scale * x.new_ones((n_drugs, z_dim))
+            ).independent(2),
+            "biases": dist.Normal(
+                x.new_zeros(n_conditions, n_drugs),
+                bias_scale * x.new_ones(n_conditions, n_drugs),
+            ).independent(2),
+        }
+
+    # define the model p(x|z)p(z)
+    def model(self, x, y, c, af):
+        # register PyTorch module `decoder` with Pyro
+        pyro.module("decoder", self.decoder)
+
+        r_module = pyro.random_module("lmb", nn_module=self.lmb, prior=self.prior)()
+        if self.use_cuda:
+            r_module.cuda()
+
+        with pyro.plate("data"):
+            # setup hyperparameters for prior p(z)
+            z_loc = x.new_zeros(torch.Size((x.size(0), self.z_dim)))
+            z_scale = x.new_ones(torch.Size((x.size(0), self.z_dim)))
+
+            with poutine.scale(scale=af):
+                z = pyro.sample(
+                    "latent",
+                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
+                )
+                l = pyro.sample(
+                    "library",
+                    dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
+                )
+
+                px_r, px_rate = self.decoder.forward(z, l)
+                px_logit = torch.log(px_rate) - px_r
+
+                pyro.sample(
+                    "obs",
+                    dist.NegativeBinomial(
+                        total_count=torch.exp(px_r) + self.eps,
+                        logits=px_logit,
+                        validate_args=True,
+                    ).to_event(1),
+                    obs=x,
+                )
+
+                dr_logits = r_module.forward(z)
+                mean_dr_logits = drvish.util.average_response(dr_logits, c)
+
+                pyro.sample(
+                    "drs",
+                    dist.Normal(
+                        loc=mean_dr_logits,
+                        scale=0.5 * torch.ones_like(mean_dr_logits),
+                        validate_args=True,
+                    ).independent(2),
+                    obs=y,
+                )
+
+    # define the guide (i.e. variational distribution) q(z|x)
+    def guide(self, x, y, c, af):
+        # register PyTorch module `encoder` with Pyro
+        pyro.module("encoder", self.encoder)
+        pyro.module("l_encoder", self.l_encoder)
+
+        # register variational parameters with pyro
+        a_loc = pyro.param("alpha_loc", x.new_zeros((self.n_drugs, self.z_dim)))
+        a_scale = softplus(
+            pyro.param("alpha_scale", x.new_zeros((self.n_drugs, self.z_dim)))
+        )
+
+        b_loc = pyro.param("beta_loc", x.new_zeros((self.n_conditions, self.n_drugs)))
+        b_scale = softplus(
+            pyro.param("beta_scale", x.new_zeros((self.n_conditions, self.n_drugs)))
+        )
+
+        prior = {
+            "linear.weight": dist.Laplace(
+                a_loc, a_scale, validate_args=True
+            ).independent(2),
+            "biases": dist.Normal(b_loc, b_scale, validate_args=True).independent(2),
+        }
+
+        pyro.random_module("lmb", nn_module=self.lmb, prior=prior)()
+
+        with pyro.plate("data"):
+            # use the encoder to get the parameters used to define q(z|x)
+            z_loc, z_scale = self.encoder.forward(x)
+            l_loc, l_scale = self.l_encoder.forward(x)
+
+            # sample the latent code z
+            with poutine.scale(scale=af):
+                pyro.sample(
+                    "latent",
+                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
+                )
+                pyro.sample(
+                    "library",
+                    dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
                 )
