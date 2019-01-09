@@ -145,7 +145,9 @@ class NBDecoder(nn.Module):
         # The decoder returns values for the parameters of the NB distribution
         px = self.px_decoder(z)
         px_scale = self.px_scale_decoder(px)
-        px_rate = softplus(torch.exp(library) * px_scale)
+
+        # clamp library for stability
+        px_rate = softplus(torch.exp(torch.clamp(library, 22)) * px_scale)
         px_r = self.px_r_decoder(px)
         return px_r, px_rate
 
@@ -172,7 +174,10 @@ class PoissonDecoder(nn.Module):
         )
 
     def forward(self, z, library):
-        px_rate = softplus(torch.exp(library) * self.px_scale_decoder(self.decoder(z)))
+        # clamp library for stability
+        px_rate = softplus(
+            torch.exp(torch.clamp(library, 22)) * self.px_scale_decoder(self.decoder(z))
+        )
         return px_rate
 
 
@@ -218,7 +223,7 @@ class NBVAE(nn.Module):
         n_layers: int = 3,
         n_hidden: int = 64,
         use_cuda: bool = False,
-        eps: float = 1e-8,
+        eps: float = 1e-7,
     ):
         super(NBVAE, self).__init__()
         self.encoder = Encoder(n_input, z_dim, n_layers=n_layers, n_hidden=n_hidden)
@@ -373,7 +378,7 @@ class DRNBVAE(nn.Module):
         n_hidden: int = 64,
         lam_scale: float = 5.0,
         use_cuda: bool = False,
-        eps: float = 1e-8,
+        eps: float = 1e-7,
     ):
         super(DRNBVAE, self).__init__()
         # create the encoder and decoder networks
