@@ -172,9 +172,7 @@ class PoissonDecoder(nn.Module):
         )
 
     def forward(self, z, library):
-        px_rate = softplus(
-            torch.exp(library) * self.px_scale_decoder(self.decoder(z))
-        )
+        px_rate = softplus(torch.exp(library) * self.px_scale_decoder(self.decoder(z)))
         return px_rate
 
 

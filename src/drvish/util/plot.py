@@ -9,6 +9,15 @@ from umap import UMAP
 from typing import Sequence
 
 
+__all__ = [
+    "log_likelihood",
+    "umap",
+    "drug_response",
+    "dose_curve_comparison",
+    "drug_combo",
+]
+
+
 def log_likelihood(train_elbo: Sequence, test_elbo: Sequence, test_int: int):
     x = np.arange(len(train_elbo))
 

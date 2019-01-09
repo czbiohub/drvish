@@ -10,28 +10,43 @@ from torch.utils.data.sampler import SubsetRandomSampler
 import pyro.infer as pi
 
 
-def split_dataset(*xs: torch.Tensor, batch_size: int, train_p: float, use_cuda: bool = False):
+__all__ = ["split_dataset", "train", "evaluate"]
+
+
+def split_dataset(
+    *xs: torch.Tensor, batch_size: int, train_p: float, use_cuda: bool = False
+):
     n_cells = xs[0].shape[0]
 
     example_indices = np.random.permutation(n_cells)
     n_train = int(train_p * n_cells)
 
-    dataset = TensorDataset(xs)
+    dataset = TensorDataset(*xs)
 
     data_loader_train = DataLoader(
-        dataset=dataset, batch_size=batch_size, pin_memory=use_cuda,
+        dataset=dataset,
+        batch_size=batch_size,
+        pin_memory=use_cuda,
         sampler=SubsetRandomSampler(example_indices[:n_train]),
     )
 
     data_loader_test = DataLoader(
-        dataset=dataset, batch_size=batch_size, pin_memory=use_cuda,
+        dataset=dataset,
+        batch_size=batch_size,
+        pin_memory=use_cuda,
         sampler=SubsetRandomSampler(example_indices[n_train:]),
     )
 
     return data_loader_train, data_loader_test
 
 
-def train(svi: pi.SVI, train_loader: DataLoader, n_train: int, annealing_factor: float = 1.0, use_cuda: bool = False):
+def train(
+    svi: pi.SVI,
+    train_loader: DataLoader,
+    n_train: int,
+    annealing_factor: float = 1.0,
+    use_cuda: bool = False,
+):
     af = torch.tensor(annealing_factor, requires_grad=False)
     if use_cuda:
         af = af.cuda()
