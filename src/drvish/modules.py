@@ -223,11 +223,11 @@ class NBVAE(nn.Module):
         n_layers: int = 3,
         n_hidden: int = 64,
         use_cuda: bool = False,
-        eps: float = 1e-7,
+        eps: float = 1e-6,
     ):
         super(NBVAE, self).__init__()
         self.encoder = Encoder(n_input, z_dim, n_layers=n_layers, n_hidden=n_hidden)
-        self.l_encoder = Encoder(n_input, 1, n_layers=1, n_hidden=n_hidden)
+        self.l_encoder = Encoder(n_input, 1, n_layers=n_layers, n_hidden=n_hidden)
         self.decoder = NBDecoder(z_dim, n_input, n_layers=n_layers, n_hidden=n_hidden)
 
         self.eps = torch.tensor(eps, requires_grad=False)
@@ -378,12 +378,12 @@ class DRNBVAE(nn.Module):
         n_hidden: int = 64,
         lam_scale: float = 5.0,
         use_cuda: bool = False,
-        eps: float = 1e-7,
+        eps: float = 1e-6,
     ):
         super(DRNBVAE, self).__init__()
         # create the encoder and decoder networks
         self.encoder = Encoder(n_input, z_dim, n_layers=n_layers, n_hidden=n_hidden)
-        self.l_encoder = Encoder(n_input, 1, n_layers=1, n_hidden=n_hidden)
+        self.l_encoder = Encoder(n_input, 1, n_layers=n_layers, n_hidden=n_hidden)
         self.decoder = NBDecoder(z_dim, n_input, n_layers=n_layers, n_hidden=n_hidden)
 
         self.lmb = LinearMultiBias(z_dim, n_drugs, n_conditions)
