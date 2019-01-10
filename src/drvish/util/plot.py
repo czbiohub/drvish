@@ -69,6 +69,7 @@ def drug_response(dr: np.ndarray, doses: np.ndarray, class_labels: np.ndarray):
     )
 
     n_classes = len(np.unique(class_labels))
+    n_conditions = doses.shape[0]
 
     df = pd.DataFrame(
         {
