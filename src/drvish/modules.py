@@ -377,6 +377,7 @@ class DRNBVAE(nn.Module):
         n_layers: int = 3,
         n_hidden: int = 64,
         lam_scale: float = 5.0,
+        bias_scale: float = 10.0,
         use_cuda: bool = False,
         eps: float = 1e-6,
     ):
