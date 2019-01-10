@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 
 from torch.nn.functional import softplus
+from torch.distributions import constraints
 
 import pyro
 import pyro.distributions as dist
@@ -475,20 +476,26 @@ class DRNBVAE(nn.Module):
 
         # register variational parameters with pyro
         a_loc = pyro.param("alpha_loc", x.new_zeros((self.n_drugs, self.z_dim)))
-        a_scale = softplus(
-            pyro.param("alpha_scale", x.new_zeros((self.n_drugs, self.z_dim)))
+        a_scale = pyro.param(
+            "alpha_scale",
+            x.new_ones((self.n_drugs, self.z_dim)),
+            constraint=constraints.positive,
         )
 
         b_loc = pyro.param("beta_loc", x.new_zeros((self.n_conditions, self.n_drugs)))
-        b_scale = softplus(
-            pyro.param("beta_scale", x.new_zeros((self.n_conditions, self.n_drugs)))
+        b_scale = pyro.param(
+            "beta_scale",
+            x.new_ones((self.n_conditions, self.n_drugs)),
+            constraint=constraints.positive,
         )
 
         prior = {
             "linear.weight": dist.Laplace(
                 a_loc, a_scale, validate_args=True
             ).independent(2),
-            "biases": dist.Normal(b_loc, b_scale, validate_args=True).independent(2),
+            "biases": dist.Normal(
+                b_loc, b_scale, validate_args=True
+            ).independent(2),
         }
 
         pyro.random_module("lmb", nn_module=self.lmb, prior=prior)()
