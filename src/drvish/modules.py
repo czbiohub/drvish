@@ -491,10 +491,10 @@ class DRNBVAE(nn.Module):
 
         prior = {
             "linear.weight": dist.Laplace(
-                a_loc, a_scale, validate_args=True
+                a_loc, a_scale + self.eps, validate_args=True
             ).independent(2),
             "biases": dist.Normal(
-                b_loc, b_scale, validate_args=True
+                b_loc, b_scale + self.eps, validate_args=True
             ).independent(2),
         }
 
