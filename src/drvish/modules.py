@@ -428,6 +428,9 @@ class DRNBVAE(nn.Module):
             z_loc = x.new_zeros(torch.Size((x.size(0), self.z_dim)))
             z_scale = x.new_ones(torch.Size((x.size(0), self.z_dim)))
 
+            l_loc = x.new_zeros(torch.Size((x.size(0), 1)))
+            l_scale = x.new_ones(torch.Size((x.size(0), 1)))
+
             with poutine.scale(scale=af):
                 z = pyro.sample(
                     "latent",
