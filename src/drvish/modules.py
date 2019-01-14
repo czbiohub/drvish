@@ -95,7 +95,7 @@ class Encoder(nn.Module):
 
 
 class NBDecoder(nn.Module):
-    r"""Decodes data from latent space of ``n_input`` dimensions ``n_output``
+    r"""Decodes data from latent space of ``n_input`` dimensions to ``n_output``
     dimensions using a fully-connected neural network of ``n_hidden`` layers.
 
     :param n_input: The dimensionality of the input (latent space)
@@ -124,7 +124,7 @@ class NBDecoder(nn.Module):
 
         # mean gamma
         self.px_scale_decoder = nn.Sequential(
-            nn.Linear(n_hidden, n_output), nn.Softmax(dim=-1)
+            nn.Linear(n_hidden, n_output), nn.LogSoftmax(dim=-1)
         )
 
         # dispersion: here we only deal with gene-cell dispersion case
@@ -147,10 +147,13 @@ class NBDecoder(nn.Module):
         px = self.px_decoder(z)
         px_scale = self.px_scale_decoder(px)
 
-        # clamp library for stability
-        px_rate = softplus(torch.exp(torch.clamp(library, 22)) * px_scale)
         px_r = self.px_r_decoder(px)
-        return px_r, px_rate
+
+        # clamp library for stability
+        # px_rate = softplus(torch.exp(torch.clamp(library, max=22)) * px_scale)
+        px_logit = library + px_scale - px_r
+
+        return px_r, px_logit
 
 
 class PoissonDecoder(nn.Module):
@@ -171,14 +174,12 @@ class PoissonDecoder(nn.Module):
             dropout_rate=dropout_rate,
         )
         self.px_scale_decoder = nn.Sequential(
-            nn.Linear(n_hidden, n_output), nn.Softmax(dim=-1)
+            nn.Linear(n_hidden, n_output), nn.LogSoftmax(dim=-1)
         )
 
     def forward(self, z, library):
         # clamp library for stability
-        px_rate = softplus(
-            torch.exp(torch.clamp(library, 22)) * self.px_scale_decoder(self.decoder(z))
-        )
+        px_rate = library + self.px_scale_decoder(self.decoder(z))
         return px_rate
 
 
@@ -263,8 +264,7 @@ class NBVAE(nn.Module):
                     dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
                 )
 
-                px_r, px_rate = self.decoder.forward(z, l)
-                px_logit = torch.log(px_rate) - px_r
+                px_r, px_logit = self.decoder.forward(z, l)
 
                 pyro.sample(
                     "obs",
@@ -442,8 +442,7 @@ class DRNBVAE(nn.Module):
                     dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
                 )
 
-                px_r, px_rate = self.decoder.forward(z, l)
-                px_logit = torch.log(px_rate) - px_r
+                px_r, px_logit = self.decoder.forward(z, l)
 
                 pyro.sample(
                     "obs",
