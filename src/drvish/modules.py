@@ -32,7 +32,7 @@ class FCLayers(nn.Module):
             collections.OrderedDict(
                 [
                     (
-                        "Layer {}".format(i),
+                        "Layer_{}".format(i),
                         nn.Sequential(
                             nn.Linear(n_in, n_out),
                             nn.BatchNorm1d(n_out, eps=1e-3, momentum=0.01),
@@ -177,7 +177,7 @@ class PoissonDecoder(nn.Module):
             nn.Linear(n_hidden, n_output), nn.LogSoftmax(dim=-1)
         )
 
-    def forward(self, z, library):
+    def forward(self, z: torch.Tensor, library: torch.Tensor):
         # clamp library for stability
         px_rate = library + self.px_scale_decoder(self.decoder(z))
         return px_rate
@@ -202,18 +202,18 @@ class BinomDecoder(nn.Module):
         )
         self.px_logit_decoder = nn.Linear(n_hidden, n_output)
 
-    def forward(self, z):
+    def forward(self, z: torch.Tensor):
         return self.px_logit_decoder(self.decoder(z))
 
 
 class LinearMultiBias(nn.Module):
-    def __init__(self, p, d, c):
+    def __init__(self, n_input: int, n_drugs: int, n_conditions: int):
         super(LinearMultiBias, self).__init__()
-        self.linear = nn.Linear(p, d, bias=False)
-        self.biases = nn.Parameter(torch.Tensor(c, d))
+        self.linear = nn.Linear(n_input, n_drugs, bias=False)
+        self.biases = nn.Parameter(torch.Tensor(n_conditions, n_drugs))
 
-    def forward(self, x):
-        return self.linear(x)[:, None, :] + self.biases
+    def forward(self, x: torch.Tensor):
+        return (self.linear(x)[:, None, :] + self.biases).mean(0)
 
 
 class NBVAE(nn.Module):
@@ -242,7 +242,7 @@ class NBVAE(nn.Module):
         self.use_cuda = use_cuda
         self.z_dim = z_dim
 
-    def model(self, x, af):
+    def model(self, x: torch.Tensor, af: torch.Tensor):
         # register PyTorch module `decoder` with Pyro
         pyro.module("decoder", self.decoder)
 
@@ -277,7 +277,7 @@ class NBVAE(nn.Module):
                 )
 
     # define the guide (i.e. variational distribution) q(z|x)
-    def guide(self, x, af):
+    def guide(self, x: torch.Tensor, af: torch.Tensor):
         # register PyTorch module `encoder` with Pyro
         pyro.module("encoder", self.encoder)
         pyro.module("l_encoder", self.l_encoder)
@@ -323,7 +323,7 @@ class BinomVAE(nn.Module):
         self.use_cuda = use_cuda
         self.z_dim = z_dim
 
-    def model(self, x, af):
+    def model(self, x: torch.Tensor, af: torch.Tensor):
         # register PyTorch module `decoder` with Pyro
         pyro.module("decoder", self.decoder)
 
@@ -349,7 +349,7 @@ class BinomVAE(nn.Module):
                     obs=x,
                 )
 
-    def guide(self, x, af):
+    def guide(self, x: torch.Tensor, af: torch.Tensor):
         # register PyTorch module `encoder` with Pyro
         pyro.module("encoder", self.encoder)
 
@@ -408,15 +408,17 @@ class DRNBVAE(nn.Module):
         self.prior = {
             "linear.weight": dist.Laplace(
                 x.new_zeros((n_drugs, z_dim)), lam_scale * x.new_ones((n_drugs, z_dim))
-            ).independent(2),
+            ).to_event(2),
             "biases": dist.Normal(
                 x.new_zeros(n_conditions, n_drugs),
                 bias_scale * x.new_ones(n_conditions, n_drugs),
-            ).independent(2),
+            ).to_event(2),
         }
 
     # define the model p(x|z)p(z)
-    def model(self, x, y, c, af):
+    def model(
+        self, x: torch.Tensor, y: torch.Tensor, c: torch.Tensor, af: torch.Tensor
+    ):
         # register PyTorch module `decoder` with Pyro
         pyro.module("decoder", self.decoder)
 
@@ -463,12 +465,14 @@ class DRNBVAE(nn.Module):
                         loc=mean_dr_logits,
                         scale=0.5 * torch.ones_like(mean_dr_logits),
                         validate_args=True,
-                    ).independent(2),
+                    ).to_event(2),
                     obs=y,
                 )
 
     # define the guide (i.e. variational distribution) q(z|x)
-    def guide(self, x, y, c, af):
+    def guide(
+        self, x: torch.Tensor, y: torch.Tensor, c: torch.Tensor, af: torch.Tensor
+    ):
         # register PyTorch module `encoder` with Pyro
         pyro.module("encoder", self.encoder)
         pyro.module("l_encoder", self.l_encoder)
@@ -491,10 +495,10 @@ class DRNBVAE(nn.Module):
         prior = {
             "linear.weight": dist.Laplace(
                 a_loc, a_scale + self.eps, validate_args=True
-            ).independent(2),
+            ).to_event(2),
             "biases": dist.Normal(
                 b_loc, b_scale + self.eps, validate_args=True
-            ).independent(2),
+            ).to_event(2),
         }
 
         pyro.random_module("lmb", nn_module=self.lmb, prior=prior)()

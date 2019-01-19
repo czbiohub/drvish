@@ -1,6 +1,8 @@
 # implementation of Aggregated Momentum Gradient Descent, adapted from
 # the code at https://github.com/AtheMathmo/AggMo
 
+from typing import Sequence
+
 import torch
 from torch.optim.optimizer import Optimizer, required
 
@@ -8,8 +10,17 @@ from torch.optim.optimizer import Optimizer, required
 class AggMo(Optimizer):
     """Implements Aggregated Momentum Gradient Descent"""
 
-    def __init__(self, params, lr=required, betas=(0.0, 0.9, 0.99), weight_decay=0):
-        defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
+    def __init__(
+        self,
+        params: dict,
+        lr: float = required,
+        betas: Sequence[float] = (0.0, 0.9, 0.99),
+        weight_decay: float = 0.0,
+        clip_norm: float = None,
+    ):
+        defaults = dict(
+            lr=lr, betas=betas, weight_decay=weight_decay, clip_norm=clip_norm
+        )
         super(AggMo, self).__init__(params, defaults)
 
     @classmethod
@@ -39,6 +50,9 @@ class AggMo(Optimizer):
                 if p.grad is None:
                     continue
                 d_p = p.grad.data
+                if group["clip_norm"] is not None:
+                    d_p.clamp_(-group["clip_norm"], group["clip_norm"])
+
                 if weight_decay != 0:
                     d_p.add_(weight_decay, p.data)
                 param_state = self.state[p]
