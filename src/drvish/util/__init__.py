@@ -29,26 +29,29 @@ def build_dr_dataset(
     n_features: int,
     n_drugs: int,
     n_conditions: int,
-    prog_sparsity: float = 0.5,
-    class_sparsity: float = 0.5,
-    drug_sparsity: float = 0.5,
-    scale: Union[int, float] = 3,
+    prog_kw: dict = None,
+    class_kw: dict = None,
+    drug_kw: dict = None,
+    library_kw: dict = None,
 ):
+    prog_kw = dict(scale=3, sparsity=0.5) if prog_kw is None else prog_kw.copy()
+    class_kw = dict(scale=3, sparsity=0.5) if class_kw is None else class_kw.copy()
+    drug_kw = dict(scale=3, sparsity=0.5) if drug_kw is None else drug_kw.copy()
+    library_kw = dict(loc=8.5, scale=0.5) if library_kw is None else library_kw.copy()
+
     assert n_cells // n_classes == n_cells / n_classes
 
     n_cells_per_class = n_cells // n_classes
 
-    programs = simscity.latent.gen_programs(n_latent, n_features, prog_sparsity, scale)
+    programs = simscity.latent.gen_programs(n_latent, n_features, **prog_kw)
 
-    classes = simscity.latent.gen_classes(n_latent, n_classes, class_sparsity, scale)
+    classes = simscity.latent.gen_classes(n_latent, n_classes, **class_kw)
 
-    class_labels = np.random.permutation(
-        np.repeat(np.arange(n_classes), n_cells_per_class)
-    )
+    class_labels = np.tile(np.arange(n_classes), n_cells_per_class)
 
-    latent_exp = np.empty((n_cells, n_latent))
+    latent_exp = np.empty((n_cells_per_class, n_classes, n_latent))
     for i in np.arange(n_classes):
-        latent_exp[class_labels == i, :] = simscity.latent.gen_class_samples(
+        latent_exp[:, i, :] = simscity.latent.gen_class_samples(
             n_cells_per_class, classes[i, :]
         )
 
@@ -56,17 +59,27 @@ def build_dr_dataset(
 
     z_weights = []
     doses = []
-    dr = []
+    responses = []
 
     for i in range(n_drugs):
-        z_weights.append(
-            simscity.drug.projection(n_latent, scale=scale, sparsity=drug_sparsity)
-        )
-        doses.append(simscity.drug.doses(np.sqrt(n_latent) * scale, n_conditions))
-        dr.append(simscity.drug.response(latent_exp, z_weights[-1], doses[-1]))
+        z_weights.append(simscity.drug.projection(n_latent, **drug_kw))
 
-    lib_size = simscity.sequencing.library_size(n_cells, loc=8.5, scale=0.5)
+        doses.append(simscity.drug.doses(np.sqrt(n_latent) * scale, n_conditions))
+        responses.append(simscity.drug.response(latent_exp, z_weights[-1], doses[-1]))
+
+    lib_size = simscity.sequencing.library_size(
+        (n_cells_per_class, n_classes), **library_kw
+    )
 
     umis = simscity.sequencing.umi_counts(np.exp(exp), lib_size=lib_size)
 
-    return latent_exp, class_labels, programs, z_weights, doses, dr, lib_size, umis
+    return (
+        latent_exp,
+        class_labels,
+        programs,
+        z_weights,
+        doses,
+        responses,
+        lib_size,
+        umis,
+    )
