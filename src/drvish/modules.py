@@ -13,11 +13,17 @@ import pyro
 import pyro.distributions as dist
 import pyro.poutine as poutine
 
-import drvish.util
 
-
-# class for creating a bunch of fully connected layers
 class FCLayers(nn.Module):
+    """A helper class to build fully-connected layers for a neural network.
+
+    :param n_input: The dimensionality of the input
+    :param n_output: The dimensionality of the output
+    :param n_layers: The number of fully-connected hidden layers
+    :param n_hidden: The number of nodes per hidden layer
+    :param dropout_rate: Dropout rate to apply to each of the hidden layers
+    """
+
     def __init__(
         self,
         n_input: int,
@@ -48,6 +54,13 @@ class FCLayers(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):
+        """Forward computation on ``x``.
+
+        :param x: tensor of values with shape ``(n_in,)``
+        :return: tensor of shape ``(n_out,)``
+        :rtype: :py:class:`torch.Tensor`
+        """
+
         for layers in self.fc_layers:
             for layer in layers:
                 if isinstance(layer, nn.BatchNorm1d) and x.dim() == 3:
@@ -59,11 +72,17 @@ class FCLayers(nn.Module):
         return x
 
 
-# the Encoder takes data and encodes it in the latent space
-# this is scvi.models.modules.Encoder
-
-
 class Encoder(nn.Module):
+    r"""Encodes data of ``n_input`` dimensions into a latent space of ``n_output``
+    dimensions using a fully-connected neural network of ``n_hidden`` layers.
+
+    :param n_input: The dimensionality of the input (data space)
+    :param n_output: The dimensionality of the output (latent space)
+    :param n_layers: The number of fully-connected hidden layers
+    :param n_hidden: The number of nodes per hidden layer
+    :param dropout_rate: Dropout rate to apply to each of the hidden layers
+    """
+
     def __init__(
         self,
         n_input: int,
@@ -84,6 +103,15 @@ class Encoder(nn.Module):
         self.var_encoder = nn.Linear(n_hidden, n_output)
 
     def forward(self, x: torch.Tensor):
+        r"""The forward computation for a single sample.
+         #. Encodes the data into latent space using the encoder network
+         #. Generates a mean \\( q_m \\) and variance \\( q_v \\) (clamped to \\( [-5, 5] \\))
+         #. Samples a new value from an i.i.d. multivariate normal \\( \\sim N(q_m, \\mathbf{I}q_v) \\)
+
+        :param x: tensor with shape (n_input,)
+        :return: tensors of shape ``(n_latent,)`` for mean and var, and sample
+        :rtype: 2-tuple of :py:class:`torch.Tensor`
+        """
         # Parameters for latent distribution
         q = self.encoder(x)
         q_m = self.mean_encoder(q)
@@ -135,12 +163,13 @@ class NBDecoder(nn.Module):
 
          #. Decodes the data from the latent space using the decoder network
          #. Returns parameters for the ZINB distribution of expression
-         #. If ``dispersion != 'gene-cell'`` then value for that param will be ``None``
+
+        *Note* This parameterization is different from the one in the scVI package
 
         :param z: tensor with shape ``(n_input,)``
         :param library: library size
         :return: parameters for the NB distribution of expression
-        :rtype: 4-tuple of :py:class:`torch.Tensor`
+        :rtype: 2-tuple of :py:class:`torch.Tensor`
         """
 
         # The decoder returns values for the parameters of the NB distribution
@@ -153,10 +182,21 @@ class NBDecoder(nn.Module):
         # px_rate = softplus(torch.exp(torch.clamp(library, max=22)) * px_scale)
         px_logit = library + px_scale - px_r
 
-        return px_r, px_logit
+        return torch.exp(px_r), px_logit
 
 
 class PoissonDecoder(nn.Module):
+    """Decoder data from a latent space of ``n_input`` dimensions to ``n_output``
+    dimensions, and returns the rate parameter for a Poisson distribution. This
+    decoder is not well-tested and may not be stable.
+
+    :param n_input: The dimensionality of the input (latent space)
+    :param n_output: The dimensionality of the output (data space)
+    :param n_layers: The number of fully-connected hidden layers
+    :param n_hidden: The number of nodes per hidden layer
+    :param dropout_rate: Dropout rate to apply to each of the hidden layers
+    """
+
     def __init__(
         self,
         n_input: int,
@@ -184,6 +224,17 @@ class PoissonDecoder(nn.Module):
 
 
 class BinomDecoder(nn.Module):
+    """Decoder data from a latent space of ``n_input`` dimensions to ``n_output``
+    dimensions, and returns the logit parameter for a binomial distribution. This
+    decoder is not well-tested and may not be stable.
+
+    :param n_input: The dimensionality of the input (latent space)
+    :param n_output: The dimensionality of the output (data space)
+    :param n_layers: The number of fully-connected hidden layers
+    :param n_hidden: The number of nodes per hidden layer
+    :param dropout_rate: Dropout rate to apply to each of the hidden layers
+    """
+
     def __init__(
         self,
         n_input: int,
@@ -207,30 +258,51 @@ class BinomDecoder(nn.Module):
 
 
 class LinearMultiBias(nn.Module):
+    """Module that compute a multi-target logistic function based on a learnable
+    vector of weights on ``n_input`` features and a vector of biases for different
+    conditions.
+
+    :param n_input: The dimensionality of the input (latent space)
+    :param n_drugs: The dimensionality of the output (number of targets)
+    :param n_conditions: The dimensionality of the bias vector)
+    """
+
     def __init__(self, n_input: int, n_drugs: int, n_conditions: int):
         super(LinearMultiBias, self).__init__()
         self.linear = nn.Linear(n_input, n_drugs, bias=False)
         self.biases = nn.Parameter(torch.Tensor(n_conditions, n_drugs))
 
     def forward(self, x: torch.Tensor):
-        return (self.linear(x)[:, None, :] + self.biases).mean(0)
+        return (self.linear(x)[..., None, :] + self.biases).mean(0)
 
 
 class NBVAE(nn.Module):
+    r"""Variational auto-encoder model with negative binomial loss.
+
+    :param n_input: Number of input genes
+    :param n_latent: Dimensionality of the latent space
+    :param n_layers: Number of hidden layers used for encoder and decoder NNs
+    :param n_hidden: Number of nodes per hidden layer
+    :param dropout_rate: Dropout rate for neural networks
+    :param use_cuda: if True, copy parameters into GPU memory
+    :param eps: value to add to NB count parameter for numerical stability
+    """
+
     def __init__(
         self,
         *,
         n_input: int,
-        z_dim: int = 8,
+        n_latent: int = 8,
         n_layers: int = 3,
         n_hidden: int = 64,
+        dropout_rate: float = 0.1,
         use_cuda: bool = False,
         eps: float = 1e-6,
     ):
         super(NBVAE, self).__init__()
-        self.encoder = Encoder(n_input, z_dim, n_layers=n_layers, n_hidden=n_hidden)
-        self.l_encoder = Encoder(n_input, 1, n_layers=n_layers, n_hidden=n_hidden)
-        self.decoder = NBDecoder(z_dim, n_input, n_layers=n_layers, n_hidden=n_hidden)
+        self.encoder = Encoder(n_input, n_latent, n_layers, n_hidden, dropout_rate)
+        self.l_encoder = Encoder(n_input, 1, n_layers, n_hidden, dropout_rate)
+        self.decoder = NBDecoder(n_latent, n_input, n_layers, n_hidden, dropout_rate)
 
         self.eps = torch.tensor(eps, requires_grad=False)
 
@@ -240,7 +312,7 @@ class NBVAE(nn.Module):
             self.cuda()
 
         self.use_cuda = use_cuda
-        self.z_dim = z_dim
+        self.n_latent = n_latent
 
     def model(self, x: torch.Tensor, af: torch.Tensor):
         # register PyTorch module `decoder` with Pyro
@@ -248,30 +320,26 @@ class NBVAE(nn.Module):
 
         with pyro.plate("data"):
             # setup hyperparameters for prior p(z)
-            z_loc = x.new_zeros(torch.Size((x.size(0), self.z_dim)))
-            z_scale = x.new_ones(torch.Size((x.size(0), self.z_dim)))
+            z_loc = x.new_zeros(torch.Size((x.size(0), self.n_latent)))
+            z_scale = x.new_ones(torch.Size((x.size(0), self.n_latent)))
 
             l_loc = x.new_zeros(torch.Size((x.size(0), 1)))
             l_scale = x.new_ones(torch.Size((x.size(0), 1)))
 
+            z = pyro.sample(
+                "latent", dist.Normal(z_loc, z_scale, validate_args=True).to_event(1)
+            )
+            l = pyro.sample(
+                "library", dist.Normal(l_loc, l_scale, validate_args=True).to_event(1)
+            )
+
+            px_r, px_logit = self.decoder.forward(z, l)
+
             with poutine.scale(scale=af):
-                z = pyro.sample(
-                    "latent",
-                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
-                )
-                l = pyro.sample(
-                    "library",
-                    dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
-                )
-
-                px_r, px_logit = self.decoder.forward(z, l)
-
                 pyro.sample(
                     "obs",
                     dist.NegativeBinomial(
-                        total_count=torch.exp(px_r) + self.eps,
-                        logits=px_logit,
-                        validate_args=True,
+                        total_count=px_r + self.eps, logits=px_logit, validate_args=True
                     ).to_event(1),
                     obs=x,
                 )
@@ -307,13 +375,12 @@ class BinomVAE(nn.Module):
         z_dim: int = 8,
         n_layers: int = 3,
         n_hidden: int = 64,
+        dropout_rate: float = 0.1,
         use_cuda: bool = False,
     ):
         super(BinomVAE, self).__init__()
-        self.encoder = Encoder(n_input, z_dim, n_layers=n_layers, n_hidden=n_hidden)
-        self.decoder = BinomDecoder(
-            z_dim, n_input, n_layers=n_layers, n_hidden=n_hidden
-        )
+        self.encoder = Encoder(n_input, z_dim, n_layers, n_hidden, dropout_rate)
+        self.decoder = BinomDecoder(z_dim, n_input, n_layers, n_hidden, dropout_rate)
 
         if use_cuda:
             # calling cuda() here will put all the parameters of
@@ -366,29 +433,46 @@ class BinomVAE(nn.Module):
 
 
 class DRNBVAE(nn.Module):
-    # an NBVAE with a dose-response module attached
+    """A variational auto-encoder module with negative binomial loss and a dose
+    reponse module attached.
+
+    :param n_input: Number of input genes
+    :param n_classes: Number of different cell types used for drug response
+    :param n_drugs: Number of different drug targets in response data
+    :param n_conditions: Number of conditions for each target
+    :param n_latent: Dimensionality of the latent space
+    :param n_layers: Number of hidden layers used for encoder and decoder NNs
+    :param n_hidden: Number of nodes per hidden layer
+    :param lam_scale: Scaling factor for prior on regression weights
+    :param bias_scale: Scaling factor for prior on regression biases
+    :param dropout_rate: Dropout rate for neural networks
+    :param use_cuda: if True, copy parameters into GPU memory
+    :param eps: value to add for numerical stability
+    """
 
     def __init__(
         self,
         *,
         n_input: int,
+        n_classes: int,
         n_drugs: int,
         n_conditions: int,
-        z_dim: int = 8,
+        n_latent: int = 8,
         n_layers: int = 3,
         n_hidden: int = 64,
         lam_scale: float = 5.0,
         bias_scale: float = 10.0,
+        dropout_rate: float = 0.1,
         use_cuda: bool = False,
         eps: float = 1e-6,
     ):
         super(DRNBVAE, self).__init__()
         # create the encoder and decoder networks
-        self.encoder = Encoder(n_input, z_dim, n_layers=n_layers, n_hidden=n_hidden)
-        self.l_encoder = Encoder(n_input, 1, n_layers=n_layers, n_hidden=n_hidden)
-        self.decoder = NBDecoder(z_dim, n_input, n_layers=n_layers, n_hidden=n_hidden)
+        self.encoder = Encoder(n_input, n_latent, n_layers, n_hidden, dropout_rate)
+        self.l_encoder = Encoder(n_input, 1, n_layers, n_hidden, dropout_rate)
+        self.decoder = NBDecoder(n_latent, n_input, n_layers, n_hidden, dropout_rate)
 
-        self.lmb = LinearMultiBias(z_dim, n_drugs, n_conditions)
+        self.lmb = LinearMultiBias(n_latent, n_drugs, n_conditions)
 
         self.eps = torch.tensor(eps, requires_grad=False)
 
@@ -398,7 +482,8 @@ class DRNBVAE(nn.Module):
             self.cuda()
 
         self.use_cuda = use_cuda
-        self.z_dim = z_dim
+        self.n_latent = n_latent
+        self.n_classes = n_classes
         self.n_drugs = n_drugs
         self.n_conditions = n_conditions
 
@@ -407,7 +492,8 @@ class DRNBVAE(nn.Module):
 
         self.prior = {
             "linear.weight": dist.Laplace(
-                x.new_zeros((n_drugs, z_dim)), lam_scale * x.new_ones((n_drugs, z_dim))
+                x.new_zeros((n_drugs, n_latent)),
+                lam_scale * x.new_ones((n_drugs, n_latent)),
             ).to_event(2),
             "biases": dist.Normal(
                 x.new_zeros(n_conditions, n_drugs),
@@ -416,9 +502,7 @@ class DRNBVAE(nn.Module):
         }
 
     # define the model p(x|z)p(z)
-    def model(
-        self, x: torch.Tensor, y: torch.Tensor, c: torch.Tensor, af: torch.Tensor
-    ):
+    def model(self, x: torch.Tensor, y: torch.Tensor, af: torch.Tensor):
         # register PyTorch module `decoder` with Pyro
         pyro.module("decoder", self.decoder)
 
@@ -428,60 +512,54 @@ class DRNBVAE(nn.Module):
 
         with pyro.plate("data"):
             # setup hyperparameters for prior p(z)
-            z_loc = x.new_zeros(torch.Size((x.size(0), self.z_dim)))
-            z_scale = x.new_ones(torch.Size((x.size(0), self.z_dim)))
+            z_loc = x.new_zeros(torch.Size((x.size(0), self.n_classes, self.n_latent)))
+            z_scale = x.new_ones(torch.Size((x.size(0), self.n_classes, self.n_latent)))
 
-            l_loc = x.new_zeros(torch.Size((x.size(0), 1)))
-            l_scale = x.new_ones(torch.Size((x.size(0), 1)))
+            l_loc = x.new_zeros(torch.Size((x.size(0), self.n_classes, 1)))
+            l_scale = x.new_ones(torch.Size((x.size(0), self.n_classes, 1)))
+
+            z = pyro.sample(
+                "latent", dist.Normal(z_loc, z_scale, validate_args=True).to_event(2)
+            )
+            l = pyro.sample(
+                "library", dist.Normal(l_loc, l_scale, validate_args=True).to_event(2)
+            )
+
+            px_r, px_logit = self.decoder.forward(z, l)
 
             with poutine.scale(scale=af):
-                z = pyro.sample(
-                    "latent",
-                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
-                )
-                l = pyro.sample(
-                    "library",
-                    dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
-                )
-
-                px_r, px_logit = self.decoder.forward(z, l)
-
                 pyro.sample(
                     "obs",
                     dist.NegativeBinomial(
-                        total_count=torch.exp(px_r) + self.eps,
-                        logits=px_logit,
-                        validate_args=True,
-                    ).to_event(1),
+                        total_count=px_r + self.eps, logits=px_logit, validate_args=True
+                    ).to_event(2),
                     obs=x,
                 )
 
-                dr_logits = r_module.forward(z)
-                mean_dr_logits = drvish.util.average_response(dr_logits, c)
+        mean_dr_logit = r_module.forward(z)
 
-                pyro.sample(
-                    "drs",
-                    dist.Normal(
-                        loc=mean_dr_logits,
-                        scale=0.5 * torch.ones_like(mean_dr_logits),
-                        validate_args=True,
-                    ).to_event(2),
-                    obs=y,
-                )
+        with poutine.scale(scale=af):
+            pyro.sample(
+                "drs",
+                dist.Normal(
+                    loc=mean_dr_logit,
+                    scale=torch.ones_like(mean_dr_logit),
+                    validate_args=True,
+                ).to_event(3),
+                obs=y,
+            )
 
     # define the guide (i.e. variational distribution) q(z|x)
-    def guide(
-        self, x: torch.Tensor, y: torch.Tensor, c: torch.Tensor, af: torch.Tensor
-    ):
+    def guide(self, x: torch.Tensor, y: torch.Tensor, af: torch.Tensor):
         # register PyTorch module `encoder` with Pyro
         pyro.module("encoder", self.encoder)
         pyro.module("l_encoder", self.l_encoder)
 
         # register variational parameters with pyro
-        a_loc = pyro.param("alpha_loc", x.new_zeros((self.n_drugs, self.z_dim)))
+        a_loc = pyro.param("alpha_loc", x.new_zeros((self.n_drugs, self.n_latent)))
         a_scale = pyro.param(
             "alpha_scale",
-            x.new_ones((self.n_drugs, self.z_dim)),
+            x.new_ones((self.n_drugs, self.n_latent)),
             constraint=constraints.positive,
         )
 
@@ -512,9 +590,9 @@ class DRNBVAE(nn.Module):
             with poutine.scale(scale=af):
                 pyro.sample(
                     "latent",
-                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
+                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(2),
                 )
                 pyro.sample(
                     "library",
-                    dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
+                    dist.Normal(l_loc, l_scale, validate_args=True).to_event(2),
                 )

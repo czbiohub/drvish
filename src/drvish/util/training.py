@@ -2,44 +2,15 @@
 
 import typing
 
-import numpy as np
-
 import torch
 
-from torch.utils.data import DataLoader, TensorDataset
-from torch.utils.data.sampler import SubsetRandomSampler
+from torch.utils.data import DataLoader
 
 import pyro.infer as pi
 
 
-__all__ = ["split_dataset", "evaluate_step", "train", "evaluate"]
-
-
-def split_dataset(
-    *xs: torch.Tensor, batch_size: int, train_p: float, use_cuda: bool = False
-):
-    n_cells = xs[0].shape[0]
-
-    example_indices = np.random.permutation(n_cells)
-    n_train = int(train_p * n_cells)
-
-    dataset = TensorDataset(*xs)
-
-    data_loader_train = DataLoader(
-        dataset=dataset,
-        batch_size=batch_size,
-        pin_memory=use_cuda,
-        sampler=SubsetRandomSampler(example_indices[:n_train]),
-    )
-
-    data_loader_test = DataLoader(
-        dataset=dataset,
-        batch_size=batch_size,
-        pin_memory=use_cuda,
-        sampler=SubsetRandomSampler(example_indices[n_train:]),
-    )
-
-    return data_loader_train, data_loader_test
+def cos_annealing_factor(epoch: int, max_epoch: int, eta_min: float = 1e-4):
+    return eta_min + (1. - eta_min) * (1. - np.cos(np.pi * epoch / max_epoch)) / 2.
 
 
 def evaluate_step(

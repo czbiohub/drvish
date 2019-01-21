@@ -17,7 +17,7 @@ def read(*names, **kwargs):
 
 setuptools.setup(
     name="drvish",
-    version="0.0.1",
+    version="0.0.2",
     license="MIT License",
     description="scRNA + deep learning + drug response",
     long_description=read("README.md"),

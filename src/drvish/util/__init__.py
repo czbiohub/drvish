@@ -11,15 +11,8 @@ import simscity
 
 import drvish.util.plot
 
-from .training import split_dataset, train, evaluate
-
-
-def cos_annealing_factor(epoch: int, max_epoch: int, eta_min: float = 1e-4):
-    return eta_min + (1. - eta_min) * (1. - np.cos(np.pi * epoch / max_epoch)) / 2.
-
-
-def average_response(x: torch.Tensor, c: Union[torch.Tensor, np.ndarray]):
-    return torch.stack([x[c == i, ...].mean(0) for i in c])
+from .training import cos_annealing_factor, train, evaluate
+from .data import split_dataset, split_2d_dataset
 
 
 def build_dr_dataset(
@@ -64,7 +57,9 @@ def build_dr_dataset(
     for i in range(n_drugs):
         z_weights.append(simscity.drug.projection(n_latent, **drug_kw))
 
-        doses.append(simscity.drug.doses(np.sqrt(n_latent) * scale, n_conditions))
+        doses.append(
+            simscity.drug.doses(np.sqrt(n_latent) * drug_kw["scale"], n_conditions)
+        )
         responses.append(simscity.drug.response(latent_exp, z_weights[-1], doses[-1]))
 
     lib_size = simscity.sequencing.library_size(
