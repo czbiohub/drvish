@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import itertools
+
 import altair as alt
 import numpy as np
 import pandas as pd
@@ -9,13 +11,14 @@ from umap import UMAP
 from typing import Sequence
 
 
-__all__ = [
-    "log_likelihood",
-    "umap",
-    "drug_response",
-    "dose_curve_comparison",
-    "drug_combo",
-]
+def make_grid(charts: Sequence[alt.Chart], n_cols: int):
+    it = iter(charts)
+    return alt.vconcat(
+        *(
+            alt.hconcat(*filter(None, c))
+            for c in itertools.zip_longest(*((it,) * n_cols))
+        )
+    )
 
 
 def log_likelihood(train_elbo: Sequence, test_elbo: Sequence, test_int: int):
