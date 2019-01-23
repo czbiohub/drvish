@@ -87,7 +87,7 @@ def drug_response(dr: np.ndarray, doses: np.ndarray, class_labels: np.ndarray):
         .mark_line()
         .encode(
             x="Dose",
-            y=alt.Y("% Viable", type="quantitative", axis=alt.Axis(format="%")),
+            y=alt.Y("% Inhibition", type="quantitative", axis=alt.Axis(format="%")),
             color="class:N",
         )
     )
