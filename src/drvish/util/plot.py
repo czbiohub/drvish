@@ -77,7 +77,7 @@ def drug_response(dr: np.ndarray, doses: np.ndarray, class_labels: np.ndarray):
     df = pd.DataFrame(
         {
             "Dose": np.tile(doses, n_classes),
-            "% Viable": drs.flatten(),
+            "% Inhibition": drs.flatten(),
             "class": np.repeat(np.arange(n_classes), n_conditions),
         }
     )
