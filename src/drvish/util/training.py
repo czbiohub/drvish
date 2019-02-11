@@ -41,7 +41,7 @@ def evaluate_step(
     epoch_loss = 0.
 
     # do a training epoch over each mini-batch x returned by the data loader
-    for _, xs in enumerate(data_loader):
+    for xs in data_loader:
         if use_cuda:
             xs = tuple(x.cuda() for x in xs)
 

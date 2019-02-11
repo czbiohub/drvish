@@ -14,6 +14,19 @@ import pyro.distributions as dist
 import pyro.poutine as poutine
 
 
+def _normal_prior(loc: float, scale: float, *sizes: int, use_cuda: bool = False):
+    """Helper function to make a normal distribution on the correct device"""
+
+    loc = loc * torch.ones(*sizes, requires_grad=False)
+    scale = scale * torch.ones(*sizes, requires_grad=False)
+
+    if use_cuda:
+        loc = loc.cuda()
+        scale = scale.cuda()
+
+    return dist.Normal(loc, scale)
+
+
 class FCLayers(nn.Module):
     """A helper class to build fully-connected layers for a neural network.
 
@@ -178,8 +191,6 @@ class NBDecoder(nn.Module):
 
         px_r = self.px_r_decoder(px)
 
-        # clamp library for stability
-        # px_rate = softplus(torch.exp(torch.clamp(library, max=22)) * px_scale)
         px_logit = library + px_scale - px_r
 
         return torch.exp(px_r), px_logit
@@ -217,9 +228,9 @@ class PoissonDecoder(nn.Module):
             nn.Linear(n_hidden, n_output), nn.LogSoftmax(dim=-1)
         )
 
-    def forward(self, z: torch.Tensor, library: torch.Tensor):
+    def forward(self, z: torch.Tensor):
         # clamp library for stability
-        px_rate = library + self.px_scale_decoder(self.decoder(z))
+        px_rate = self.px_scale_decoder(self.decoder(z))
         return px_rate
 
 
@@ -283,6 +294,8 @@ class NBVAE(nn.Module):
     :param n_latent: Dimensionality of the latent space
     :param n_layers: Number of hidden layers used for encoder and decoder NNs
     :param n_hidden: Number of nodes per hidden layer
+    :param lib_loc: Mean for prior distribution on library scaling factor
+    :param lib_scale: Scale for prior distribution on library scaling factor
     :param dropout_rate: Dropout rate for neural networks
     :param use_cuda: if True, copy parameters into GPU memory
     :param eps: value to add to NB count parameter for numerical stability
@@ -295,6 +308,8 @@ class NBVAE(nn.Module):
         n_latent: int = 8,
         n_layers: int = 3,
         n_hidden: int = 64,
+        lib_loc: float = 7.5,
+        lib_scale: float = 0.5,
         dropout_rate: float = 0.1,
         use_cuda: bool = False,
         eps: float = 1e-6,
@@ -305,6 +320,9 @@ class NBVAE(nn.Module):
         self.decoder = NBDecoder(n_latent, n_input, n_layers, n_hidden, dropout_rate)
 
         self.eps = torch.tensor(eps, requires_grad=False)
+
+        self.z_prior = _normal_prior(0.0, 1.0, 1, n_latent, use_cuda=use_cuda)
+        self.l_prior = _normal_prior(lib_loc, lib_scale, 1, 1, use_cuda=use_cuda)
 
         if use_cuda:
             # calling cuda() here will put all the parameters of
@@ -319,30 +337,27 @@ class NBVAE(nn.Module):
         pyro.module("decoder", self.decoder)
 
         with pyro.plate("data"):
-            # setup hyperparameters for prior p(z)
-            z_loc = x.new_zeros(torch.Size((x.size(0), self.n_latent)))
-            z_scale = x.new_ones(torch.Size((x.size(0), self.n_latent)))
-
-            l_loc = x.new_zeros(torch.Size((x.size(0), 1)))
-            l_scale = x.new_ones(torch.Size((x.size(0), 1)))
-
-            z = pyro.sample(
-                "latent", dist.Normal(z_loc, z_scale, validate_args=True).to_event(1)
-            )
-            l = pyro.sample(
-                "library", dist.Normal(l_loc, l_scale, validate_args=True).to_event(1)
-            )
+            with poutine.scale(scale=af):
+                z = pyro.sample(
+                    "latent",
+                    self.z_prior.expand(
+                        torch.Size((x.size(0), self.n_latent))
+                    ).to_event(1),
+                )
+                l = pyro.sample(
+                    "library",
+                    self.l_prior.expand(torch.Size((x.size(0), 1))).to_event(1),
+                )
 
             px_r, px_logit = self.decoder.forward(z, l)
 
-            with poutine.scale(scale=af):
-                pyro.sample(
-                    "obs",
-                    dist.NegativeBinomial(
-                        total_count=px_r + self.eps, logits=px_logit, validate_args=True
-                    ).to_event(1),
-                    obs=x,
-                )
+            pyro.sample(
+                "obs",
+                dist.NegativeBinomial(
+                    total_count=px_r + self.eps, logits=px_logit, validate_args=True
+                ).to_event(1),
+                obs=x,
+            )
 
     # define the guide (i.e. variational distribution) q(z|x)
     def guide(self, x: torch.Tensor, af: torch.Tensor):
@@ -372,15 +387,17 @@ class BinomVAE(nn.Module):
         self,
         *,
         n_input: int,
-        z_dim: int = 8,
+        n_latent: int = 8,
         n_layers: int = 3,
         n_hidden: int = 64,
         dropout_rate: float = 0.1,
         use_cuda: bool = False,
     ):
         super(BinomVAE, self).__init__()
-        self.encoder = Encoder(n_input, z_dim, n_layers, n_hidden, dropout_rate)
-        self.decoder = BinomDecoder(z_dim, n_input, n_layers, n_hidden, dropout_rate)
+        self.encoder = Encoder(n_input, n_latent, n_layers, n_hidden, dropout_rate)
+        self.decoder = BinomDecoder(n_latent, n_input, n_layers, n_hidden, dropout_rate)
+
+        self.z_prior = _normal_prior(0.0, 1.0, 1, n_latent, use_cuda=use_cuda)
 
         if use_cuda:
             # calling cuda() here will put all the parameters of
@@ -388,33 +405,31 @@ class BinomVAE(nn.Module):
             self.cuda()
 
         self.use_cuda = use_cuda
-        self.z_dim = z_dim
+        self.n_latent = n_latent
 
     def model(self, x: torch.Tensor, af: torch.Tensor):
         # register PyTorch module `decoder` with Pyro
         pyro.module("decoder", self.decoder)
 
         with pyro.plate("data"):
-            z_loc = x.new_zeros(torch.Size((x.size(0), self.z_dim)))
-            z_scale = x.new_ones(torch.Size((x.size(0), self.z_dim)))
-
             with poutine.scale(scale=af):
-                # sample from prior (value will be sampled by guide when computing the ELBO)
                 z = pyro.sample(
                     "latent",
-                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
-                )
-
-                px_logit = self.decoder.forward(z)
-                x_count = torch.sum(x, -1, keepdim=True)
-
-                pyro.sample(
-                    "obs",
-                    dist.Binomial(
-                        total_count=x_count, logits=px_logit, validate_args=True
+                    self.z_prior.expand(
+                        torch.Size((x.size(0), self.n_latent))
                     ).to_event(1),
-                    obs=x,
                 )
+
+            px_logit = self.decoder.forward(z)
+            x_count = torch.sum(x, -1, keepdim=True)
+
+            pyro.sample(
+                "obs",
+                dist.Binomial(
+                    total_count=x_count, logits=px_logit, validate_args=True
+                ).to_event(1),
+                obs=x,
+            )
 
     def guide(self, x: torch.Tensor, af: torch.Tensor):
         # register PyTorch module `encoder` with Pyro
@@ -443,6 +458,8 @@ class DRNBVAE(nn.Module):
     :param n_latent: Dimensionality of the latent space
     :param n_layers: Number of hidden layers used for encoder and decoder NNs
     :param n_hidden: Number of nodes per hidden layer
+    :param lib_loc: Mean for prior distribution on library scaling factor
+    :param lib_scale: Scale for prior distribution on library scaling factor
     :param lam_scale: Scaling factor for prior on regression weights
     :param bias_scale: Scaling factor for prior on regression biases
     :param dropout_rate: Dropout rate for neural networks
@@ -460,6 +477,8 @@ class DRNBVAE(nn.Module):
         n_latent: int = 8,
         n_layers: int = 3,
         n_hidden: int = 64,
+        lib_loc: float = 7.5,
+        lib_scale: float = 0.5,
         lam_scale: float = 5.0,
         bias_scale: float = 10.0,
         dropout_rate: float = 0.1,
@@ -475,6 +494,9 @@ class DRNBVAE(nn.Module):
         self.lmb = LinearMultiBias(n_latent, n_drugs, n_conditions)
 
         self.eps = torch.tensor(eps, requires_grad=False)
+
+        self.z_prior = _normal_prior(0.0, 1.0, 1, n_latent, use_cuda=use_cuda)
+        self.l_prior = _normal_prior(lib_loc, lib_scale, 1, 1, use_cuda=use_cuda)
 
         if use_cuda:
             # calling cuda() here will put all the parameters of
@@ -511,43 +533,41 @@ class DRNBVAE(nn.Module):
             r_module.cuda()
 
         with pyro.plate("data"):
-            # setup hyperparameters for prior p(z)
-            z_loc = x.new_zeros(torch.Size((x.size(0), self.n_classes, self.n_latent)))
-            z_scale = x.new_ones(torch.Size((x.size(0), self.n_classes, self.n_latent)))
-
-            l_loc = x.new_zeros(torch.Size((x.size(0), self.n_classes, 1)))
-            l_scale = x.new_ones(torch.Size((x.size(0), self.n_classes, 1)))
-
-            z = pyro.sample(
-                "latent", dist.Normal(z_loc, z_scale, validate_args=True).to_event(2)
-            )
-            l = pyro.sample(
-                "library", dist.Normal(l_loc, l_scale, validate_args=True).to_event(2)
-            )
+            with poutine.scale(scale=af):
+                z = pyro.sample(
+                    "latent",
+                    self.z_prior.expand(
+                        torch.Size((x.size(0), self.n_classes, self.n_latent))
+                    ).to_event(2),
+                )
+                l = pyro.sample(
+                    "library",
+                    self.l_prior.expand(
+                        torch.Size((x.size(0), self.n_classes, 1))
+                    ).to_event(2),
+                )
 
             px_r, px_logit = self.decoder.forward(z, l)
 
-            with poutine.scale(scale=af):
-                pyro.sample(
-                    "obs",
-                    dist.NegativeBinomial(
-                        total_count=px_r + self.eps, logits=px_logit, validate_args=True
-                    ).to_event(2),
-                    obs=x,
-                )
+            pyro.sample(
+                "obs",
+                dist.NegativeBinomial(
+                    total_count=px_r + self.eps, logits=px_logit, validate_args=True
+                ).to_event(2),
+                obs=x,
+            )
 
         mean_dr_logit = r_module.forward(z)
 
-        with poutine.scale(scale=af):
-            pyro.sample(
-                "drs",
-                dist.Normal(
-                    loc=mean_dr_logit,
-                    scale=torch.ones_like(mean_dr_logit),
-                    validate_args=True,
-                ).to_event(3),
-                obs=y,
-            )
+        pyro.sample(
+            "drs",
+            dist.Normal(
+                loc=mean_dr_logit,
+                scale=torch.ones_like(mean_dr_logit),
+                validate_args=True,
+            ).to_event(3),
+            obs=y,
+        )
 
     # define the guide (i.e. variational distribution) q(z|x)
     def guide(self, x: torch.Tensor, y: torch.Tensor, af: torch.Tensor):
