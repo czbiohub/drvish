@@ -3,6 +3,8 @@
 
 import collections
 
+from typing import Sequence, Tuple
+
 import torch
 import torch.nn as nn
 
@@ -31,22 +33,13 @@ class FCLayers(nn.Module):
     """A helper class to build fully-connected layers for a neural network.
 
     :param n_input: The dimensionality of the input
-    :param n_output: The dimensionality of the output
-    :param n_layers: The number of fully-connected hidden layers
-    :param n_hidden: The number of nodes per hidden layer
+    :param layers: Size of the intermediate layers
     :param dropout_rate: Dropout rate to apply to each of the hidden layers
     """
 
-    def __init__(
-        self,
-        n_input: int,
-        n_output: int,
-        n_layers: int = 1,
-        n_hidden: int = 128,
-        dropout_rate: float = 0.1,
-    ):
+    def __init__(self, n_input: int, layers: Sequence[int], dropout_rate: float = 0.1):
         super(FCLayers, self).__init__()
-        layers_dim = [n_input] + (n_layers - 1) * [n_hidden] + [n_output]
+        layers_dim = [n_input] + layers
         self.fc_layers = nn.Sequential(
             collections.OrderedDict(
                 [
@@ -66,12 +59,11 @@ class FCLayers(nn.Module):
             )
         )
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward computation on ``x``.
 
-        :param x: tensor of values with shape ``(n_in,)``
-        :return: tensor of shape ``(n_out,)``
-        :rtype: :py:class:`torch.Tensor`
+        :param x: tensor of values with shape ``(n_input,)``
+        :return: output of fully-connected layers
         """
 
         for layers in self.fc_layers:
@@ -106,16 +98,12 @@ class Encoder(nn.Module):
     ):
         super(Encoder, self).__init__()
         self.encoder = FCLayers(
-            n_input=n_input,
-            n_output=n_hidden,
-            n_layers=n_layers,
-            n_hidden=n_hidden,
-            dropout_rate=dropout_rate,
+            n_input=n_input, layers=[n_hidden] * n_layers, dropout_rate=dropout_rate
         )
         self.mean_encoder = nn.Linear(n_hidden, n_output)
         self.var_encoder = nn.Linear(n_hidden, n_output)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         r"""The forward computation for a single sample.
          #. Encodes the data into latent space using the encoder network
          #. Generates a mean \\( q_m \\) and variance \\( q_v \\) (clamped to \\( [-5, 5] \\))
@@ -123,7 +111,6 @@ class Encoder(nn.Module):
 
         :param x: tensor with shape (n_input,)
         :return: tensors of shape ``(n_latent,)`` for mean and var, and sample
-        :rtype: 2-tuple of :py:class:`torch.Tensor`
         """
         # Parameters for latent distribution
         q = self.encoder(x)
@@ -156,22 +143,20 @@ class NBDecoder(nn.Module):
     ):
         super(NBDecoder, self).__init__()
         self.px_decoder = FCLayers(
-            n_input=n_input,
-            n_output=n_hidden,
-            n_layers=n_layers,
-            n_hidden=n_hidden,
-            dropout_rate=dropout_rate,
+            n_input=n_input, layers=[n_hidden] * n_layers, dropout_rate=dropout_rate
         )
 
         # mean gamma
-        self.px_scale_decoder = nn.Sequential(
+        self.scale_decoder = nn.Sequential(
             nn.Linear(n_hidden, n_output), nn.LogSoftmax(dim=-1)
         )
 
         # dispersion: here we only deal with gene-cell dispersion case
-        self.px_r_decoder = nn.Linear(n_hidden, n_output)
+        self.r_decoder = nn.Linear(n_hidden, n_output)
 
-    def forward(self, z: torch.Tensor, library: torch.Tensor):
+    def forward(
+        self, z: torch.Tensor, library: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         r"""The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
@@ -182,90 +167,17 @@ class NBDecoder(nn.Module):
         :param z: tensor with shape ``(n_input,)``
         :param library: library size
         :return: parameters for the NB distribution of expression
-        :rtype: 2-tuple of :py:class:`torch.Tensor`
         """
 
         # The decoder returns values for the parameters of the NB distribution
         px = self.px_decoder(z)
-        px_scale = self.px_scale_decoder(px)
+        scale = self.scale_decoder(px)
 
-        px_r = self.px_r_decoder(px)
+        log_r = self.r_decoder(px)
 
-        px_logit = library + px_scale - px_r
+        logit = library + scale - log_r
 
-        return torch.exp(px_r), px_logit
-
-
-class PoissonDecoder(nn.Module):
-    """Decoder data from a latent space of ``n_input`` dimensions to ``n_output``
-    dimensions, and returns the rate parameter for a Poisson distribution. This
-    decoder is not well-tested and may not be stable.
-
-    :param n_input: The dimensionality of the input (latent space)
-    :param n_output: The dimensionality of the output (data space)
-    :param n_layers: The number of fully-connected hidden layers
-    :param n_hidden: The number of nodes per hidden layer
-    :param dropout_rate: Dropout rate to apply to each of the hidden layers
-    """
-
-    def __init__(
-        self,
-        n_input: int,
-        n_output: int,
-        n_layers: int = 1,
-        n_hidden: int = 128,
-        dropout_rate: float = 0.1,
-    ):
-        super(PoissonDecoder, self).__init__()
-        self.decoder = FCLayers(
-            n_input=n_input,
-            n_output=n_hidden,
-            n_layers=n_layers,
-            n_hidden=n_hidden,
-            dropout_rate=dropout_rate,
-        )
-        self.px_scale_decoder = nn.Sequential(
-            nn.Linear(n_hidden, n_output), nn.LogSoftmax(dim=-1)
-        )
-
-    def forward(self, z: torch.Tensor):
-        # clamp library for stability
-        px_rate = self.px_scale_decoder(self.decoder(z))
-        return px_rate
-
-
-class BinomDecoder(nn.Module):
-    """Decoder data from a latent space of ``n_input`` dimensions to ``n_output``
-    dimensions, and returns the logit parameter for a binomial distribution. This
-    decoder is not well-tested and may not be stable.
-
-    :param n_input: The dimensionality of the input (latent space)
-    :param n_output: The dimensionality of the output (data space)
-    :param n_layers: The number of fully-connected hidden layers
-    :param n_hidden: The number of nodes per hidden layer
-    :param dropout_rate: Dropout rate to apply to each of the hidden layers
-    """
-
-    def __init__(
-        self,
-        n_input: int,
-        n_output: int,
-        n_layers: int = 1,
-        n_hidden: int = 128,
-        dropout_rate: float = 0.1,
-    ):
-        super(BinomDecoder, self).__init__()
-        self.decoder = FCLayers(
-            n_input=n_input,
-            n_output=n_hidden,
-            n_layers=n_layers,
-            n_hidden=n_hidden,
-            dropout_rate=dropout_rate,
-        )
-        self.px_logit_decoder = nn.Linear(n_hidden, n_output)
-
-    def forward(self, z: torch.Tensor):
-        return self.px_logit_decoder(self.decoder(z))
+        return log_r, logit
 
 
 class LinearMultiBias(nn.Module):
@@ -283,7 +195,7 @@ class LinearMultiBias(nn.Module):
         self.linear = nn.Linear(n_input, n_drugs, bias=False)
         self.biases = nn.Parameter(torch.Tensor(n_conditions, n_drugs))
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return (self.linear(x)[..., None, :] + self.biases).mean(0)
 
 
@@ -349,12 +261,14 @@ class NBVAE(nn.Module):
                     self.l_prior.expand(torch.Size((x.size(0), 1))).to_event(1),
                 )
 
-            px_r, px_logit = self.decoder.forward(z, l)
+            log_r, logit = self.decoder.forward(z, l)
 
             pyro.sample(
                 "obs",
                 dist.NegativeBinomial(
-                    total_count=px_r + self.eps, logits=px_logit, validate_args=True
+                    total_count=torch.exp(log_r) + self.eps,
+                    logits=logit,
+                    validate_args=True,
                 ).to_event(1),
                 obs=x,
             )
@@ -379,71 +293,6 @@ class NBVAE(nn.Module):
                 pyro.sample(
                     "library",
                     dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
-                )
-
-
-class BinomVAE(nn.Module):
-    def __init__(
-        self,
-        *,
-        n_input: int,
-        n_latent: int = 8,
-        n_layers: int = 3,
-        n_hidden: int = 64,
-        dropout_rate: float = 0.1,
-        use_cuda: bool = False,
-    ):
-        super(BinomVAE, self).__init__()
-        self.encoder = Encoder(n_input, n_latent, n_layers, n_hidden, dropout_rate)
-        self.decoder = BinomDecoder(n_latent, n_input, n_layers, n_hidden, dropout_rate)
-
-        self.z_prior = _normal_prior(0.0, 1.0, 1, n_latent, use_cuda=use_cuda)
-
-        if use_cuda:
-            # calling cuda() here will put all the parameters of
-            # the encoder and decoder networks into gpu memory
-            self.cuda()
-
-        self.use_cuda = use_cuda
-        self.n_latent = n_latent
-
-    def model(self, x: torch.Tensor, af: torch.Tensor):
-        # register PyTorch module `decoder` with Pyro
-        pyro.module("decoder", self.decoder)
-
-        with pyro.plate("data"):
-            with poutine.scale(scale=af):
-                z = pyro.sample(
-                    "latent",
-                    self.z_prior.expand(
-                        torch.Size((x.size(0), self.n_latent))
-                    ).to_event(1),
-                )
-
-            px_logit = self.decoder.forward(z)
-            x_count = torch.sum(x, -1, keepdim=True)
-
-            pyro.sample(
-                "obs",
-                dist.Binomial(
-                    total_count=x_count, logits=px_logit, validate_args=True
-                ).to_event(1),
-                obs=x,
-            )
-
-    def guide(self, x: torch.Tensor, af: torch.Tensor):
-        # register PyTorch module `encoder` with Pyro
-        pyro.module("encoder", self.encoder)
-
-        with pyro.plate("data"):
-            # use the encoder to get the parameters used to define q(z|x)
-            z_loc, z_scale = self.encoder.forward(x)
-
-            # sample the latent code z
-            with poutine.scale(scale=af):
-                pyro.sample(
-                    "latent",
-                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
                 )
 
 
@@ -547,12 +396,14 @@ class DRNBVAE(nn.Module):
                     ).to_event(2),
                 )
 
-            px_r, px_logit = self.decoder.forward(z, l)
+            log_r, logit = self.decoder.forward(z, l)
 
             pyro.sample(
                 "obs",
                 dist.NegativeBinomial(
-                    total_count=px_r + self.eps, logits=px_logit, validate_args=True
+                    total_count=torch.exp(log_r) + self.eps,
+                    logits=logit,
+                    validate_args=True,
                 ).to_event(2),
                 obs=x,
             )

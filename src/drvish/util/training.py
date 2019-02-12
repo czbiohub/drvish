@@ -27,10 +27,10 @@ def evaluate_step(
 
     :param eval_fn: typically either SVI.step (for training)
                     or SVI.evaluate_loss (for testing)
-    :param data_loader:
-    :param loss_scaling_factor:
-    :param annealing_factor:
-    :param use_cuda:
+    :param data_loader: the dataset to iterate through and evaluate
+    :param loss_scaling_factor: constant to normalize loss, for unbalanced train/testing
+    :param annealing_factor: scaling factor for variational loss
+    :param use_cuda: if compute is on GPU
     :return:
     """
     af = torch.tensor(annealing_factor, requires_grad=False)
