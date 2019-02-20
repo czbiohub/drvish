@@ -11,7 +11,12 @@ from umap import UMAP
 from typing import Sequence
 
 
-def make_grid(charts: Sequence[alt.Chart], n_cols: int):
+def make_grid(*charts: alt.Chart, n_cols: int) -> alt.Chart:
+    """Arrange a series of charts into a grid.
+
+    :param charts: the plots to arrange into a grid
+    :param n_cols: number of columns to create
+    """
     it = iter(charts)
     return alt.vconcat(
         *(
@@ -21,19 +26,27 @@ def make_grid(charts: Sequence[alt.Chart], n_cols: int):
     )
 
 
-def log_likelihood(train_elbo: Sequence, test_elbo: Sequence, test_int: int):
-    x = np.arange(len(train_elbo))
+def loss(
+    train_loss: Sequence[float], test_loss: Sequence[float], test_int: int
+) -> alt.Chart:
+    """Plot the loss over epochs for training and testing datasets.
+
+    :param train_loss: Loss per epoch on training data
+    :param test_loss: Loss per epoch on test data
+    :param test_int: Interval if testing was not performed every epoch
+    """
+    x = np.arange(len(train_loss))
 
     d = pd.concat(
         [
-            pd.DataFrame({"x": x, "y": train_elbo, "run": "train"}),
-            pd.DataFrame({"x": x[::test_int], "y": test_elbo, "run": "test"}),
+            pd.DataFrame({"epoch": x, "loss": train_loss, "run": "train"}),
+            pd.DataFrame({"epoch": x[::test_int], "loss": test_loss, "run": "test"}),
         ]
     )
 
     return (
         alt.Chart(d)
-        .encode(x="x:Q", y="y:Q", color="run:N")
+        .encode(x="epoch:Q", y="loss:Q", color="run:N")
         .mark_line(point=True)
         .properties(height=240, width=240)
     )
