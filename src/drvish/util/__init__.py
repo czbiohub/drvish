@@ -1,18 +1,11 @@
 #!/usr/bin/env python
 
 
-from typing import Union
-
-import torch
-
 import numpy as np
 
 import simscity
 
 import drvish.util.plot
-
-from .training import cos_annealing_factor, train, evaluate
-from .data import split_dataset, split_2d_dataset
 
 
 def build_dr_dataset(
