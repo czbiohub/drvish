@@ -30,25 +30,17 @@ class FCLayers(nn.Module):
     :param dropout_rate: Dropout rate to apply to each of the hidden layers
     """
 
-    def __init__(self, n_input: int, layers: Sequence[int], dropout_rate: float = 0.1):
+    def __init__(self, layers: Sequence[int], dropout_rate: float = 0.1):
         super(FCLayers, self).__init__()
-        layers_dim = [n_input] + layers
         self.fc_layers = nn.Sequential(
-            collections.OrderedDict(
-                [
-                    (
-                        "Layer_{}".format(i),
-                        nn.Sequential(
-                            nn.BatchNorm1d(n_in, eps=1e-3, momentum=0.01),
-                            nn.ReLU(),
-                            nn.Linear(n_in, n_out),
-                            nn.Dropout(p=dropout_rate),
-                        ),
-                    )
-                    for i, (n_in, n_out) in enumerate(
-                        zip(layers_dim[:-1], layers_dim[1:])
-                    )
-                ]
+            *(
+                nn.Sequential(
+                    nn.BatchNorm1d(n_in, eps=1e-3, momentum=0.01),
+                    nn.ReLU(),
+                    nn.Linear(n_in, n_out, bias=use_bias),
+                    nn.Dropout(p=dropout_rate),
+                )
+                for i, (n_in, n_out) in enumerate(zip(layers[:-1], layers[1:]))
             )
         )
 
@@ -88,11 +80,12 @@ class Encoder(nn.Module):
         dropout_rate: float,
     ):
         super(Encoder, self).__init__()
+
         self.encoder = FCLayers(
-            n_input=n_input, layers=layers, dropout_rate=dropout_rate
+            layers=[n_input] + layers, dropout_rate=dropout_rate
         )
-        self.mean_encoder = nn.Linear(layers[-1], n_output)
-        self.var_encoder = nn.Linear(layers[-1], n_output)
+        self.mean_encoder = FCLayers([layers[-1], n_output], dropout_rate=0.0)
+        self.var_encoder = FCLayers([layers[-1], n_output], dropout_rate=0.0)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         r"""The forward computation for a single sample.
@@ -132,16 +125,17 @@ class NBDecoder(nn.Module):
     ):
         super(NBDecoder, self).__init__()
         self.px_decoder = FCLayers(
-            n_input=n_input, layers=layers, dropout_rate=dropout_rate
+            layers=[n_input] + layers, dropout_rate=dropout_rate
         )
 
         # mean gamma
         self.scale_decoder = nn.Sequential(
-            nn.Linear(layers[-1], n_output), nn.LogSoftmax(dim=-1)
+            FCLayers(layers=[layers[-1], n_output], dropout_rate=0.0),
+            nn.LogSoftmax(dim=-1),
         )
 
         # dispersion: here we only deal with gene-cell dispersion case
-        self.r_decoder = nn.Linear(layers[-1], n_output)
+        self.r_decoder = FCLayers(layers=[layers[-1], n_output], dropout_rate=0.0)
 
     def forward(
         self, z: torch.Tensor, library: torch.Tensor

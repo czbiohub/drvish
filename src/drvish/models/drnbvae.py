@@ -4,12 +4,13 @@
 from typing import Sequence
 
 import pyro
+import pyro.distributions as dist
+import pyro.poutine as poutine
 import torch
-from pyro import distributions as dist, poutine as poutine
-from torch import nn as nn
+import torch.nn as nn
 from torch.distributions import constraints
 
-from drvish.models.modules import Encoder, NBDecoder, LinearMultiBias, _normal_prior
+from drvish.models.modules import Encoder, LinearMultiBias, NBDecoder, _normal_prior
 
 
 class DRNBVAE(nn.Module):
