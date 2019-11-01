@@ -1,7 +1,6 @@
-FROM nvidia/cuda:9.0-cudnn7-devel-ubuntu16.04
+FROM nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04
 
 # Optional args
-ARG cuda=1
 ARG python_version=3.7
 ARG pyro_branch=release
 ARG uid=1000

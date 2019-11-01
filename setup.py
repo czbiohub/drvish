@@ -31,5 +31,5 @@ setuptools.setup(
     ],
     zip_safe=False,
     install_requires=["numpy", "torch", "pyro-ppl", "simscity"],
-    extras_require={"dev": ["pytest", "black", "pre-commit"], "plot": ["altair"]},
+    extras_require={"dev": ["pytest", "black"], "plot": ["altair"]},
 )
