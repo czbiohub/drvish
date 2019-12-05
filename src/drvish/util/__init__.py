@@ -11,7 +11,7 @@ import drvish.util.plot
 def build_dr_dataset(
     n_classes: int,
     n_latent: int,
-    n_cells: int,
+    n_cells_per_class: int,
     n_features: int,
     n_drugs: int,
     n_conditions: int,
@@ -20,14 +20,26 @@ def build_dr_dataset(
     drug_kw: dict = None,
     library_kw: dict = None,
 ):
-    prog_kw = dict(scale=3, sparsity=0.5) if prog_kw is None else prog_kw.copy()
-    class_kw = dict(scale=3, sparsity=0.5) if class_kw is None else class_kw.copy()
-    drug_kw = dict(scale=3, sparsity=0.5) if drug_kw is None else drug_kw.copy()
-    library_kw = dict(loc=8.5, scale=0.5) if library_kw is None else library_kw.copy()
-
-    assert n_cells // n_classes == n_cells / n_classes
-
-    n_cells_per_class = n_cells // n_classes
+    prog_kw = (
+        dict(scale=1.0 / np.sqrt(n_features), sparsity=1.0)
+        if prog_kw is None
+        else prog_kw.copy()
+    )
+    class_kw = (
+        dict(scale=1.0 / np.sqrt(n_latent), sparsity=1.0)
+        if class_kw is None
+        else class_kw.copy()
+    )
+    drug_kw = (
+        dict(scale=1.0 / np.sqrt(n_drugs), sparsity=0.5)
+        if drug_kw is None
+        else drug_kw.copy()
+    )
+    library_kw = (
+        dict(loc=np.log(0.1 * n_features), scale=0.5)
+        if library_kw is None
+        else library_kw.copy()
+    )
 
     programs = simscity.latent.gen_programs(n_latent, n_features, **prog_kw)
 

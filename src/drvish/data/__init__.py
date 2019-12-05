@@ -44,9 +44,6 @@ class DataLoader2D(DataLoader):
             batch = self.collate_fn([self.dataset[i] for i in indices])
             batch.append(self.dataset.target)
 
-            if self.pin_memory:
-                batch = tuple(b.cuda() for b in batch)
-
             yield batch
 
 

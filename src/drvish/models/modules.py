@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 
-
 import collections
 from typing import Sequence, Tuple
 
-import pyro.distributions as dist
 import torch
 import torch.nn as nn
+
+import pyro.distributions as dist
 
 
 def _normal_prior(loc: float, scale: float, *sizes: int, use_cuda: bool = False):
@@ -30,7 +30,9 @@ class FCLayers(nn.Module):
     :param dropout_rate: Dropout rate to apply to each of the hidden layers
     """
 
-    def __init__(self, layers: Sequence[int], dropout_rate: float = 0.1):
+    def __init__(
+        self, layers: Sequence[int], dropout_rate: float = 0.1, use_bias: bool = True
+    ):
         super(FCLayers, self).__init__()
         self.fc_layers = nn.Sequential(
             *(
@@ -40,7 +42,7 @@ class FCLayers(nn.Module):
                     nn.Linear(n_in, n_out, bias=use_bias),
                     nn.Dropout(p=dropout_rate),
                 )
-                for i, (n_in, n_out) in enumerate(zip(layers[:-1], layers[1:]))
+                for n_in, n_out in zip(layers[:-1], layers[1:])
             )
         )
 
@@ -73,17 +75,11 @@ class Encoder(nn.Module):
     """
 
     def __init__(
-        self,
-        n_input: int,
-        n_output: int,
-        layers: Sequence[int],
-        dropout_rate: float,
+        self, n_input: int, n_output: int, layers: Sequence[int], dropout_rate: float
     ):
         super(Encoder, self).__init__()
 
-        self.encoder = FCLayers(
-            layers=[n_input] + layers, dropout_rate=dropout_rate
-        )
+        self.encoder = FCLayers([n_input] + list(layers), dropout_rate=dropout_rate)
         self.mean_encoder = FCLayers([layers[-1], n_output], dropout_rate=0.0)
         self.var_encoder = FCLayers([layers[-1], n_output], dropout_rate=0.0)
 
@@ -117,15 +113,11 @@ class NBDecoder(nn.Module):
     """
 
     def __init__(
-        self,
-        n_input: int,
-        n_output: int,
-        layers: Sequence[int],
-        dropout_rate: float,
+        self, n_input: int, n_output: int, layers: Sequence[int], dropout_rate: float
     ):
         super(NBDecoder, self).__init__()
         self.px_decoder = FCLayers(
-            layers=[n_input] + layers, dropout_rate=dropout_rate
+            layers=[n_input] + list(layers), dropout_rate=dropout_rate
         )
 
         # mean gamma
@@ -170,7 +162,7 @@ class LinearMultiBias(nn.Module):
 
     :param n_input: The dimensionality of the input (latent space)
     :param n_drugs: The dimensionality of the output (number of targets)
-    :param n_conditions: The dimensionality of the bias vector)
+    :param n_conditions: The dimensionality of the bias vector (number of doses)
     """
 
     def __init__(self, n_input: int, n_drugs: int, n_conditions: int):
@@ -180,5 +172,3 @@ class LinearMultiBias(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return (self.linear(x)[..., None, :] + self.biases).mean(0)
-
-
