@@ -11,16 +11,7 @@ from torch.utils.data import DataLoader
 import pyro.infer as pi
 import pyro.optim as po
 
-import drvish.train.cosine_scheduler as cs
-
 from drvish.train.aggmo import AggMo
-
-
-CosineWithRestarts = (
-    lambda _Optim: lambda optim_args, clip_args=None: po.PyroLRScheduler(
-        _Optim, optim_args, clip_args
-    )
-)(cs.CosineWithRestarts)
 
 
 PyroAggMo = (
@@ -137,7 +128,7 @@ def train_until_plateau(
         )
 
         scheduler.step(epoch)
-        if any(opt.starting_cycle for opt in scheduler.optim_objs.values()):
+        if any(opt.T_cur == 0 for opt in scheduler.optim_objs.values()):
             if verbose:
                 print(
                     f"[epoch {epoch:03d}]  average training loss: {train_loss[-1]:.5f}"
