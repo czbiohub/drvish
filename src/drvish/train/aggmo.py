@@ -19,7 +19,10 @@ class AggMo(Optimizer):
         nesterov: bool = False,
     ):
         defaults = dict(
-            lr=lr, betas=betas, weight_decay=weight_decay, nesterov=nesterov
+            lr=lr / len(betas),
+            betas=betas,
+            weight_decay=weight_decay,
+            nesterov=nesterov,
         )
         super(AggMo, self).__init__(params, defaults)
 
