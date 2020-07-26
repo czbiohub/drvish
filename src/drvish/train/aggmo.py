@@ -24,7 +24,7 @@ class AggMo(Optimizer):
             weight_decay=weight_decay,
             nesterov=nesterov,
         )
-        super(AggMo, self).__init__(params, defaults)
+        super().__init__(params, defaults)
 
     @classmethod
     def from_exp_form(
@@ -38,9 +38,6 @@ class AggMo(Optimizer):
     ):
         betas = [1 - a ** i for i in range(k)]
         return cls(params, lr, betas, weight_decay, nesterov)
-
-    def __setstate__(self, state):
-        super(AggMo, self).__setstate__(state)
 
     @torch.no_grad()
     def step(self, closure=None):

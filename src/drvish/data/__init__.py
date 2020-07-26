@@ -10,7 +10,7 @@ from torch.utils.data.sampler import SubsetRandomSampler, Sampler
 
 class TensorTargetDataset(TensorDataset):
     def __init__(self, *tensors: torch.Tensor):
-        super(TensorTargetDataset, self).__init__(*tensors[:-1])
+        super().__init__(*tensors[:-1])
         self.class_idx = torch.arange(tensors[0].size(1), requires_grad=False)
         self.target = tensors[-1]
 

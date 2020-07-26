@@ -37,7 +37,7 @@ class NBVAE(nn.Module):
         use_cuda: bool = False,
         eps: float = 1e-6,
     ):
-        super(NBVAE, self).__init__()
+        super().__init__()
         self.encoder = Encoder(n_input, n_latent, layers, dropout_rate)
         self.l_encoder = Encoder(n_input, 1, layers, dropout_rate)
         self.decoder = NBDecoder(n_latent, n_input, layers[::-1], dropout_rate)
