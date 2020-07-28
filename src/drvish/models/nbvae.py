@@ -72,7 +72,7 @@ class NBVAE(nn.Module):
                     self.l_prior.expand(torch.Size((x.size(0), 1))).to_event(1),
                 )
 
-            log_r, logit = self.decoder.forward(z, l)
+            log_r, logit = self.decoder(z, l)
 
             pyro.sample(
                 "obs",
@@ -92,8 +92,8 @@ class NBVAE(nn.Module):
 
         with pyro.plate("data"):
             # use the encoder to get the parameters used to define q(z|x)
-            z_loc, z_scale = self.encoder.forward(x)
-            l_loc, l_scale = self.l_encoder.forward(x)
+            z_loc, z_scale = self.encoder(x)
+            l_loc, l_scale = self.l_encoder(x)
 
             # sample the latent code z
             with poutine.scale(scale=af):

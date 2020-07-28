@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 
 import pyro.distributions as dist
+from pyro.nn import PyroModule, PyroSample
 
 
 def _normal_prior(loc: float, scale: float, *sizes: int, use_cuda: bool = False):
@@ -33,7 +34,7 @@ class FCLayers(nn.Module):
     def __init__(
         self, layers: Sequence[int], dropout_rate: float = 0.1, use_bias: bool = True
     ):
-        super(FCLayers, self).__init__()
+        super().__init__()
         self.fc_layers = nn.Sequential(
             *(
                 nn.Sequential(
@@ -77,7 +78,7 @@ class Encoder(nn.Module):
     def __init__(
         self, n_input: int, n_output: int, layers: Sequence[int], dropout_rate: float
     ):
-        super(Encoder, self).__init__()
+        super().__init__()
 
         self.encoder = FCLayers([n_input] + list(layers), dropout_rate=dropout_rate)
         self.mean_encoder = FCLayers([layers[-1], n_output], dropout_rate=0.0)
@@ -115,7 +116,7 @@ class NBDecoder(nn.Module):
     def __init__(
         self, n_input: int, n_output: int, layers: Sequence[int], dropout_rate: float
     ):
-        super(NBDecoder, self).__init__()
+        super().__init__()
         self.px_decoder = FCLayers(
             layers=[n_input] + list(layers), dropout_rate=dropout_rate
         )
@@ -155,20 +156,35 @@ class NBDecoder(nn.Module):
         return log_r, logit
 
 
-class LinearMultiBias(nn.Module):
-    """Module that compute a multi-target logistic function based on a learnable
+class LinearMultiBias(PyroModule):
+    """Module that computes a multi-target logistic function based on a learnable
     vector of weights on ``n_input`` features and a vector of biases for different
-    conditions.
+    conditions. Note that everything is computed in log space so the result is a linear
+    module.
 
     :param n_input: The dimensionality of the input (latent space)
-    :param n_drugs: The dimensionality of the output (number of targets)
-    :param n_conditions: The dimensionality of the bias vector (number of doses)
+    :param n_targets: The dimensionality of the output (e.g. number of drugs)
+    :param n_conditions: The dimensionality of the bias vector (e.g. number of doses)
+    :param lam_scale: Scale for the Laplace prior on weights
+    :param bias_scale: Scale for the Normal prior on biases
     """
 
-    def __init__(self, n_input: int, n_drugs: int, n_conditions: int):
-        super(LinearMultiBias, self).__init__()
-        self.linear = nn.Linear(n_input, n_drugs, bias=False)
-        self.biases = nn.Parameter(torch.Tensor(n_conditions, n_drugs))
+    def __init__(
+        self,
+        n_input: int,
+        n_targets: int,
+        n_conditions: int,
+        lam_scale: float,
+        bias_scale: float,
+    ):
+        super().__init__()
+        self.linear = PyroModule[nn.Linear](n_input, n_targets, bias=False)
+        self.linear.weight = PyroSample(
+            dist.Laplace(0.0, lam_scale).expand([n_targets, n_input]).to_event(2)
+        )
+        self.biases = PyroSample(
+            dist.Normal(0.0, bias_scale).expand([n_conditions, n_targets]).to_event(2)
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return (self.linear(x)[..., None, :] + self.biases).mean(0)

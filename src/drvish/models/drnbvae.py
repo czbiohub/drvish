@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-
-
 from typing import Sequence
 
 import pyro
@@ -49,13 +46,15 @@ class DRNBVAE(nn.Module):
         use_cuda: bool = False,
         eps: float = 1e-6,
     ):
-        super(DRNBVAE, self).__init__()
+        super().__init__()
         # create the encoder and decoder networks
         self.encoder = Encoder(n_input, n_latent, layers, dropout_rate)
         self.l_encoder = Encoder(n_input, 1, layers, dropout_rate)
         self.decoder = NBDecoder(n_latent, n_input, layers[::-1], dropout_rate)
 
-        self.lmb = LinearMultiBias(n_latent, n_drugs, n_conditions)
+        self.lmb = LinearMultiBias(
+            n_latent, n_drugs, n_conditions, lam_scale, bias_scale
+        )
 
         self.eps = torch.tensor(eps, requires_grad=False)
 
@@ -67,34 +66,13 @@ class DRNBVAE(nn.Module):
             # the encoder and decoder networks into gpu memory
             self.cuda()
 
-        self.use_cuda = use_cuda
         self.n_latent = n_latent
         self.n_classes = n_classes
-        self.n_drugs = n_drugs
-        self.n_conditions = n_conditions
-
-        # to get a tensor on the right device
-        x = self.lmb.biases
-
-        self.prior = {
-            "linear.weight": dist.Laplace(
-                x.new_zeros((n_drugs, n_latent)),
-                lam_scale * x.new_ones((n_drugs, n_latent)),
-            ).to_event(2),
-            "biases": dist.Normal(
-                x.new_zeros(n_conditions, n_drugs),
-                bias_scale * x.new_ones(n_conditions, n_drugs),
-            ).to_event(2),
-        }
 
     # define the model p(x|z)p(z)
     def model(self, x: torch.Tensor, y: torch.Tensor, af: torch.Tensor):
         # register PyTorch module `decoder` with Pyro
         pyro.module("decoder", self.decoder)
-
-        r_module = pyro.random_module("lmb", nn_module=self.lmb, prior=self.prior)()
-        if self.use_cuda:
-            r_module.cuda()
 
         with pyro.plate("data"):
             with poutine.scale(scale=af):
@@ -111,7 +89,7 @@ class DRNBVAE(nn.Module):
                     ).to_event(2),
                 )
 
-            log_r, logit = self.decoder.forward(z, l)
+            log_r, logit = self.decoder(z, l)
 
             pyro.sample(
                 "obs",
@@ -123,7 +101,7 @@ class DRNBVAE(nn.Module):
                 obs=x,
             )
 
-        mean_dr_logit = r_module.forward(z)
+        mean_dr_logit = self.lmb(z)
 
         pyro.sample(
             "drs",
@@ -141,36 +119,10 @@ class DRNBVAE(nn.Module):
         pyro.module("encoder", self.encoder)
         pyro.module("l_encoder", self.l_encoder)
 
-        # register variational parameters with pyro
-        a_loc = pyro.param("alpha_loc", x.new_zeros((self.n_drugs, self.n_latent)))
-        a_scale = pyro.param(
-            "alpha_scale",
-            x.new_ones((self.n_drugs, self.n_latent)),
-            constraint=constraints.positive,
-        )
-
-        b_loc = pyro.param("beta_loc", x.new_zeros((self.n_conditions, self.n_drugs)))
-        b_scale = pyro.param(
-            "beta_scale",
-            x.new_ones((self.n_conditions, self.n_drugs)),
-            constraint=constraints.positive,
-        )
-
-        prior = {
-            "linear.weight": dist.Laplace(
-                a_loc, a_scale + self.eps, validate_args=True
-            ).to_event(2),
-            "biases": dist.Normal(
-                b_loc, b_scale + self.eps, validate_args=True
-            ).to_event(2),
-        }
-
-        pyro.random_module("lmb", nn_module=self.lmb, prior=prior)()
-
         with pyro.plate("data"):
             # use the encoder to get the parameters used to define q(z|x)
-            z_loc, z_scale = self.encoder.forward(x)
-            l_loc, l_scale = self.l_encoder.forward(x)
+            z_loc, z_scale = self.encoder(x)
+            l_loc, l_scale = self.l_encoder(x)
 
             # sample the latent code z
             with poutine.scale(scale=af):
