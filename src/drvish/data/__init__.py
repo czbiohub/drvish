@@ -23,6 +23,7 @@ class TensorTargetDataset(TensorDataset):
 
 class StratifiedSubset2DSampler(Sampler):
     def __init__(self, indices, n_classes: int):
+        super().__init__(None)
         self.indices = indices
         self.n_classes = n_classes
 

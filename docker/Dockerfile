@@ -1,7 +1,6 @@
 FROM nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04
 
 # Optional args
-ARG python_version=3.7
 ARG pyro_branch=release
 ARG uid=1000
 ARG gid=1000
@@ -30,7 +29,7 @@ USER ${USER_NAME}
 
 # Install conda
 RUN curl -o ~/miniconda.sh -O \
-    https://repo.continuum.io/miniconda/Miniconda${python_version%%.*}-latest-Linux-x86_64.sh && \
+    https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \
     bash ~/miniconda.sh -f -b -p ${CONDA_DIR} && \
     rm ~/miniconda.sh
 ENV CMAKE_PREFIX_PATH="$(dirname $(which conda))/../"
@@ -39,7 +38,7 @@ ENV CMAKE_PREFIX_PATH="$(dirname $(which conda))/../"
 WORKDIR ${WORK_DIR}
 COPY install.sh ${WORK_DIR}/install.sh
 
-# Install python 2/3, PyTorch and Pyro
+# Install python, PyTorch and Pyro
 RUN cd ${WORK_DIR} && conda update -n base conda -c defaults && bash install.sh
 
 # Run Jupyter notebook
