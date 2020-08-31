@@ -4,6 +4,7 @@ import numpy as np
 
 import torch
 
+from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.data.sampler import SubsetRandomSampler, Sampler
 
@@ -19,6 +20,29 @@ class TensorTargetDataset(TensorDataset):
 
     def __len__(self):
         return self.tensors[0].size(1)
+
+
+class StratifiedSubsetSampler:
+    def __init__(self, indices: np.ndarray, class_vector: np.ndarray, batch_size: int):
+        """
+        :param indices: indices to provide samples from
+        :param class_vector: a vector of class labels
+        :param batch_size: number of samples to provide per iteration
+        """
+        self.indices = indices
+        self.batch_size = batch_size
+        self.n_splits = int(class_vector.shape[0] / batch_size)
+        self.class_vector = class_vector
+
+    def __iter__(self):
+        splitter = StratifiedShuffleSplit(
+            n_splits=self.n_splits, test_size=self.batch_size
+        )
+        for _, test_index in splitter.split(self.indices, self.class_vector):
+            yield self.indices[test_index]
+
+    def __len__(self):
+        return self.n_splits
 
 
 class StratifiedSubset2DSampler(Sampler):
