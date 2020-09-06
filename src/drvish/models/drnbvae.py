@@ -70,7 +70,9 @@ class DRNBVAE(nn.Module):
         self.n_classes = n_classes
 
     # define the model p(x|z)p(z)
-    def model(self, x: torch.Tensor, y: torch.Tensor, af: torch.Tensor):
+    def model(
+        self, x: torch.Tensor, labels: torch.Tensor, y: torch.Tensor, af: torch.Tensor
+    ):
         # register PyTorch module `decoder` with Pyro
         pyro.module("decoder", self.decoder)
 
@@ -79,14 +81,12 @@ class DRNBVAE(nn.Module):
                 z = pyro.sample(
                     "latent",
                     self.z_prior.expand(
-                        torch.Size((x.size(0), self.n_classes, self.n_latent))
-                    ).to_event(2),
+                        torch.Size((x.size(0), self.n_latent))
+                    ).to_event(1),
                 )
                 l = pyro.sample(
                     "library",
-                    self.l_prior.expand(
-                        torch.Size((x.size(0), self.n_classes, 1))
-                    ).to_event(2),
+                    self.l_prior.expand(torch.Size((x.size(0), 1))).to_event(1),
                 )
 
             log_r, logit = self.decoder(z, l)
@@ -97,11 +97,11 @@ class DRNBVAE(nn.Module):
                     total_count=torch.exp(log_r) + self.eps,
                     logits=logit,
                     validate_args=True,
-                ).to_event(2),
+                ).to_event(1),
                 obs=x,
             )
 
-        mean_dr_logit = self.lmb(z)
+        mean_dr_logit = self.lmb(z, labels)
 
         pyro.sample(
             "drs",
@@ -114,7 +114,9 @@ class DRNBVAE(nn.Module):
         )
 
     # define the guide (i.e. variational distribution) q(z|x)
-    def guide(self, x: torch.Tensor, y: torch.Tensor, af: torch.Tensor):
+    def guide(
+        self, x: torch.Tensor, labels: torch.Tensor, y: torch.Tensor, af: torch.Tensor
+    ):
         # register PyTorch module `encoder` with Pyro
         pyro.module("encoder", self.encoder)
         pyro.module("l_encoder", self.l_encoder)
@@ -128,9 +130,9 @@ class DRNBVAE(nn.Module):
             with poutine.scale(scale=af):
                 pyro.sample(
                     "latent",
-                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(2),
+                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
                 )
                 pyro.sample(
                     "library",
-                    dist.Normal(l_loc, l_scale, validate_args=True).to_event(2),
+                    dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
                 )

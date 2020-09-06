@@ -186,5 +186,15 @@ class LinearMultiBias(PyroModule):
             dist.Normal(0.0, bias_scale).expand([n_conditions, n_targets]).to_event(2)
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return (self.linear(x)[..., None, :] + self.biases).mean(0)
+    def forward(self, x: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        response = torch.sigmoid(self.linear(x)[..., None, :] + self.biases)
+
+        labels = labels.view(-1, 1, 1).expand(-1, *response.size()[1:])
+        unique_labels, labels_count = labels.unique(dim=0, return_counts=True)
+
+        res = torch.zeros_like(unique_labels, dtype=torch.float).scatter_add_(
+            0, labels, response
+        )
+        res = torch.logit(res / labels_count.float().view(-1, 1, 1), eps=1e-5)
+
+        return res
