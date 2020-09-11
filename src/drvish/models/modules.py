@@ -94,7 +94,7 @@ class Encoder(nn.Module):
         :return: tensors of shape ``(n_latent,)`` for mean and var, and sample
         """
         # Parameters for latent distribution
-        q = self.encoder(x)
+        q = self.encoder(torch.sqrt(x))
         q_m = self.mean_encoder(q)
 
         # computational stability safeguard

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import itertools
-import typing
+from typing import Callable, List, Tuple
 
 import numpy as np
 
@@ -21,16 +21,16 @@ PyroAggMo = (
 )(AggMo)
 
 
-def cos_annealing_factor(epoch: int, max_epoch: int, eta_min: float = 1e-4):
+def cos_annealing_factor(epoch: int, max_epoch: int, eta_min: float = 1e-4) -> float:
     return eta_min + (1.0 - eta_min) * (1.0 - np.cos(np.pi * epoch / max_epoch)) / 2.0
 
 
 def evaluate_step(
-    eval_fn: typing.Callable,
+    eval_fn: Callable,
     data_loader: DataLoader,
     annealing_factor: float = 1.0,
     use_cuda: bool = False,
-):
+) -> float:
     """
     Go through a dataset and return the total loss
 
@@ -67,7 +67,7 @@ def train(
     data_loader: DataLoader,
     annealing_factor: float = 1.0,
     use_cuda: bool = False,
-):
+) -> float:
     return evaluate_step(
         svi.step,
         data_loader=data_loader,
@@ -76,7 +76,7 @@ def train(
     )
 
 
-def evaluate(svi: pi.SVI, data_loader: DataLoader, use_cuda: bool = False):
+def evaluate(svi: pi.SVI, data_loader: DataLoader, use_cuda: bool = False) -> float:
     return evaluate_step(
         svi.evaluate_loss,
         data_loader=data_loader,
@@ -94,7 +94,7 @@ def train_until_plateau(
     threshold: float = 0.01,
     use_cuda: bool = False,
     verbose: bool = False,
-) -> typing.Tuple[list, list]:
+) -> Tuple[List[float], List[float]]:
     """Train a model with cosine scheduling until validation loss stabilizes. This
     function uses CosineWithRestarts to train until the learning rate stops improving.
 
