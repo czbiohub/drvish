@@ -178,16 +178,39 @@ class LinearMultiBias(PyroModule):
         bias_scale: float,
     ):
         super().__init__()
-        self.linear = PyroModule[nn.Linear](n_input, n_targets, bias=False)
-        self.linear.weight = PyroSample(
-            dist.Laplace(0.0, lam_scale).expand([n_targets, n_input]).to_event(2)
+
+        self.weights = nn.Parameter(
+            torch.nn.init.xavier_uniform_(torch.Tensor(n_input, n_targets))
         )
-        self.biases = PyroSample(
-            dist.Normal(0.0, bias_scale).expand([n_conditions, n_targets]).to_event(2)
+        self.weight_tensor = PyroSample(
+            lambda s: dist.Laplace(s.weights, lam_scale)
+            .expand([n_input, n_targets])
+            .to_event(2)
         )
 
-    def forward(self, x: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        response = torch.sigmoid(self.linear(x)[..., None, :] + self.biases)
+        self.biases = nn.Parameter(
+            torch.nn.init.xavier_uniform_(torch.Tensor(n_conditions, n_targets))
+        )
+        self.bias_tensor = PyroSample(
+            lambda s: dist.Normal(s.biases, bias_scale)
+            .expand([n_conditions, n_targets])
+            .to_event(2)
+        )
+
+    @staticmethod
+    def logit_mean_sigmoid(
+        x: torch.Tensor, weights: torch.Tensor, bias: torch.Tensor, labels: torch.Tensor
+    ) -> torch.Tensor:
+        """Computes a logistic regression on the input, averages over the class labels,
+        and then converts the results back into log space with logit function.
+
+        :param x: input tensor (n_cells x n_latent)
+        :param weights: regression weights (n_latent, n_targets)
+        :param bias: offsets for each condition (n_conditions, n_targets)
+        :param labels: label for each cell (n_cells,)
+        :return: average dose response in log space (n_classes, n_conditions, n_targets)
+        """
+        response = torch.sigmoid((x @ weights)[..., None, :] + bias)
 
         labels = labels.view(-1, 1, 1).expand(-1, *response.size()[1:])
         unique_labels, labels_count = labels.unique(dim=0, return_counts=True)
@@ -195,6 +218,11 @@ class LinearMultiBias(PyroModule):
         res = torch.zeros_like(unique_labels, dtype=torch.float).scatter_add_(
             0, labels, response
         )
-        res = torch.logit(res / labels_count.float().view(-1, 1, 1), eps=1e-5)
+        return torch.logit(res / labels_count.float().view(-1, 1, 1), eps=1e-5)
 
-        return res
+    def forward(self, x: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        return self.logit_mean_sigmoid(x, self.weight_tensor, self.bias_tensor, labels)
+
+    def calc_response(self, x: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """This is the same as the forward method but will not sample weights"""
+        return self.logit_mean_sigmoid(x, self.weights, self.biases, labels)

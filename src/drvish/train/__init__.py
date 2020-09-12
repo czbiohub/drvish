@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import itertools
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, Union
 
 import numpy as np
 
@@ -92,6 +92,7 @@ def train_until_plateau(
     validation_data: DataLoader,
     min_cycles: int = 3,
     threshold: float = 0.01,
+    annealing_factor: Union[Callable, float] = 1.0,
     use_cuda: bool = False,
     verbose: bool = False,
 ) -> Tuple[List[float], List[float]]:
@@ -105,6 +106,8 @@ def train_until_plateau(
     :param validation_data: Validation dataset in the same format
     :param min_cycles: Minimum number of cycles to run before checking for convergence
     :param threshold: Tolerance threshold for calling convergence
+    :param annealing_factor: scaling factor for variational loss, or function that goes
+                             from epoch to an annealing factor
     :param use_cuda: Whether to use the GPU for training
     :param verbose: Print training progress to stdout
     :return: Lists of training and validation loss and correlation values
@@ -121,7 +124,19 @@ def train_until_plateau(
     cycle = 0
 
     for epoch in itertools.count():
-        train_loss.append(train(svi=svi, data_loader=training_data, use_cuda=use_cuda))
+        if callable(annealing_factor):
+            af = annealing_factor(epoch)
+        else:
+            af = annealing_factor
+
+        train_loss.append(
+            train(
+                svi=svi,
+                data_loader=training_data,
+                use_cuda=use_cuda,
+                annealing_factor=af,
+            )
+        )
 
         val_loss.append(
             evaluate(svi=svi, data_loader=validation_data, use_cuda=use_cuda)
