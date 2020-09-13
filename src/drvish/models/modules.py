@@ -5,9 +5,10 @@ from typing import Sequence, Tuple
 
 import torch
 import torch.nn as nn
+from torch.distributions import constraints
 
 import pyro.distributions as dist
-from pyro.nn import PyroModule, PyroSample
+from pyro.nn import PyroModule, PyroParam, PyroSample
 
 
 def _normal_prior(loc: float, scale: float, *sizes: int, use_cuda: bool = False):
@@ -179,20 +180,27 @@ class LinearMultiBias(PyroModule):
     ):
         super().__init__()
 
-        self.weights = nn.Parameter(
+        self.weight_loc = nn.Parameter(
             torch.nn.init.xavier_uniform_(torch.Tensor(n_input, n_targets))
         )
+        self.weight_scale = PyroParam(
+            lam_scale * torch.ones(n_input, n_targets), constraint=constraints.positive
+        )
         self.weight_tensor = PyroSample(
-            lambda s: dist.Laplace(s.weights, lam_scale)
+            lambda s: dist.Laplace(s.weight_loc, s.weight_scale)
             .expand([n_input, n_targets])
             .to_event(2)
         )
 
-        self.biases = nn.Parameter(
+        self.bias_loc = nn.Parameter(
             torch.nn.init.xavier_uniform_(torch.Tensor(n_conditions, n_targets))
         )
+        self.bias_scale = PyroParam(
+            bias_scale * torch.ones(n_conditions, n_targets),
+            constraint=constraints.positive
+        )
         self.bias_tensor = PyroSample(
-            lambda s: dist.Normal(s.biases, bias_scale)
+            lambda s: dist.Normal(s.bias_loc, s.bias_scale)
             .expand([n_conditions, n_targets])
             .to_event(2)
         )
@@ -225,4 +233,4 @@ class LinearMultiBias(PyroModule):
 
     def calc_response(self, x: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """This is the same as the forward method but will not sample weights"""
-        return self.logit_mean_sigmoid(x, self.weights, self.biases, labels)
+        return self.logit_mean_sigmoid(x, self.weight_loc, self.bias_loc, labels)

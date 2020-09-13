@@ -136,3 +136,5 @@ class DRNBVAE(nn.Module):
                     "library",
                     dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
                 )
+
+            self.lmb(z_loc, labels)
