@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from typing import Type
+
 import numpy as np
 
 import torch
