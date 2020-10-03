@@ -143,7 +143,7 @@ def train_until_plateau(
         )
 
         scheduler.step(epoch)
-        if any(opt.T_cur == 0 for opt in scheduler.optim_objs.values()):
+        if any(opt.T_cur == opt.T_0 - 1 for opt in scheduler.optim_objs.values()):
             if verbose:
                 print(
                     f"[epoch {epoch:03d}]  average training loss: {train_loss[-1]:.5f}"

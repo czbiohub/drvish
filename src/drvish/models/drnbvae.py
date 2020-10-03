@@ -101,7 +101,7 @@ class DRNBVAE(nn.Module):
                 obs=x,
             )
 
-        mean_dr_logit = self.lmb(z, labels)
+        mean_dr_logit = self.lmb.calc_response(z, labels)
 
         pyro.sample(
             "drs",

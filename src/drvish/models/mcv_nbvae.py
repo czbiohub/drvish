@@ -12,7 +12,7 @@ import torch.nn as nn
 from drvish.models.modules import Encoder, NBDecoder, _normal_prior
 
 
-class NBVAE(nn.Module):
+class MCVNBVAE(nn.Module):
     r"""Variational auto-encoder model with negative binomial loss.
 
     :param n_input: Number of input genes
@@ -55,7 +55,14 @@ class NBVAE(nn.Module):
         self.use_cuda = use_cuda
         self.n_latent = n_latent
 
-    def model(self, x: torch.Tensor, af: torch.Tensor):
+    def model(
+        self,
+        x0: torch.Tensor,
+        x1: torch.Tensor,
+        log_data_split: torch.Tensor,
+        log_data_split_complement: torch.Tensor,
+        af: torch.Tensor,
+    ):
         # register PyTorch module `decoder` with Pyro
         pyro.module("decoder", self.decoder)
 
@@ -64,15 +71,18 @@ class NBVAE(nn.Module):
                 z = pyro.sample(
                     "latent",
                     self.z_prior.expand(
-                        torch.Size((x.size(0), self.n_latent))
+                        torch.Size((x0.size(0), self.n_latent))
                     ).to_event(1),
                 )
                 l = pyro.sample(
                     "library",
-                    self.l_prior.expand(torch.Size((x.size(0), 1))).to_event(1),
+                    self.l_prior.expand(torch.Size((x0.size(0), 1))).to_event(1),
                 )
 
             log_r, logit = self.decoder(z, l)
+
+            # adjust for data split
+            log_r += log_data_split_complement - log_data_split
 
             pyro.sample(
                 "obs",
@@ -81,19 +91,26 @@ class NBVAE(nn.Module):
                     logits=logit,
                     validate_args=True,
                 ).to_event(1),
-                obs=x,
+                obs=x1,
             )
 
     # define the guide (i.e. variational distribution) q(z|x)
-    def guide(self, x: torch.Tensor, af: torch.Tensor):
+    def guide(
+        self,
+        x0: torch.Tensor,
+        x1: torch.Tensor,
+        log_data_split: torch.Tensor,
+        log_data_split_complement: torch.Tensor,
+        af: torch.Tensor,
+    ):
         # register PyTorch module `encoder` with Pyro
         pyro.module("encoder", self.encoder)
         pyro.module("l_encoder", self.l_encoder)
 
         with pyro.plate("data"):
             # use the encoder to get the parameters used to define q(z|x)
-            z_loc, z_scale = self.encoder(x)
-            l_loc, l_scale = self.l_encoder(x)
+            z_loc, z_scale = self.encoder(x0)
+            l_loc, l_scale = self.l_encoder(x0)
 
             # sample the latent code z
             with poutine.scale(scale=af):
