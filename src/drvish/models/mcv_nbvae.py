@@ -63,10 +63,10 @@ class MCVNBVAE(nn.Module):
         log_data_split_complement: torch.Tensor,
         af: torch.Tensor,
     ):
-        # register PyTorch module `decoder` with Pyro
-        pyro.module("decoder", self.decoder)
+        # register modules with Pyro
+        pyro.module("mcv_nbvae", self)
 
-        with pyro.plate("data"):
+        with pyro.plate("data", len(x0)):
             with poutine.scale(scale=af):
                 z = pyro.sample(
                     "latent",
@@ -103,11 +103,9 @@ class MCVNBVAE(nn.Module):
         log_data_split_complement: torch.Tensor,
         af: torch.Tensor,
     ):
-        # register PyTorch module `encoder` with Pyro
-        pyro.module("encoder", self.encoder)
-        pyro.module("l_encoder", self.l_encoder)
+        pyro.module("mcv_nbvae", self)
 
-        with pyro.plate("data"):
+        with pyro.plate("data", len(x0)):
             # use the encoder to get the parameters used to define q(z|x)
             z_loc, z_scale = self.encoder(x0)
             l_loc, l_scale = self.l_encoder(x0)

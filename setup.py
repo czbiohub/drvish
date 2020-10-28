@@ -30,6 +30,6 @@ setuptools.setup(
         os.path.splitext(os.path.basename(path))[0] for path in glob.glob("src/*.py")
     ],
     zip_safe=False,
-    install_requires=["numpy", "torch", "pyro-ppl", "simscity"],
+    install_requires=["numpy", "torch", "cupy", "pyro-ppl", "simscity"],
     extras_require={"dev": ["pytest", "black"], "plot": ["altair"]},
 )
