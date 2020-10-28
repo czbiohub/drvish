@@ -22,6 +22,7 @@ class CupySparseDataLoader(DataLoader):
     """DataLoader that converts from sparse cupy array to a dense tensor. For large
     datasets that only fit in GPU memory in sparse form, this can speed up training
     """
+
     def __iter__(self):
         for indices in iter(self.batch_sampler):
             yield [

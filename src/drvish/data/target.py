@@ -8,6 +8,7 @@ class TargetMixin:
     Mixin class that stores the last argument as "target" data, to be added along with
     every batch
     """
+
     def __init__(self, *args):
         super().__init__(*args[:-1])
         self.target = args[-1]
@@ -26,6 +27,7 @@ class TargetLoaderMixin:
     When combined with a TargetMixin-derived class, this mixin will append the target
     data to every batch, which allows us to use aggregate/bulk data for training
     """
+
     def __iter__(self):
         for batch in super().__iter__():
             batch.append(self.dataset.target)
