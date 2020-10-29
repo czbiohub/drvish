@@ -1,3 +1,8 @@
+import torch
+
+if torch.cuda.is_available():
+    import cupy
+
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.dlpack import from_dlpack
 
@@ -9,6 +14,9 @@ class CupySparseDataset(Dataset):
 
     def __init__(self, *arrays):
         assert all(arrays[0].shape[0] == arr.shape[0] for arr in arrays)
+        assert all(
+            isinstance(arr, (cupy.sparse.csr_matrix, torch.Tensor)) for arr in arrays
+        )
         self.arrays = arrays
 
     def __getitem__(self, index):
@@ -27,5 +35,7 @@ class CupySparseDataLoader(DataLoader):
         for indices in iter(self.batch_sampler):
             yield [
                 from_dlpack(t[indices].todense().toDlpack())
+                if isinstance(t, cupy.sparse.csr_matrix)
+                else t[indices]
                 for t in self.dataset.arrays
             ]

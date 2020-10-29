@@ -183,21 +183,15 @@ class LinearMultiBias(PyroModule):
         self.weight_loc = nn.Parameter(
             torch.nn.init.xavier_uniform_(torch.Tensor(n_input, n_targets))
         )
-        self.weight_scale = lam_scale * torch.ones(n_input, n_targets)
         self.weight = PyroSample(
-            lambda s: dist.Laplace(s.weight_loc, s.weight_scale)
-            .expand([n_input, n_targets])
-            .to_event(2)
+            lambda s: dist.Laplace(s.weight_loc, lam_scale).to_event(2)
         )
 
         self.bias_loc = nn.Parameter(
             torch.nn.init.xavier_uniform_(torch.Tensor(n_conditions, n_targets))
         )
-        self.bias_scale = bias_scale * torch.ones(n_conditions, n_targets)
         self.bias = PyroSample(
-            lambda s: dist.Normal(s.bias_loc, s.bias_scale)
-            .expand([n_conditions, n_targets])
-            .to_event(2)
+            lambda s: dist.Normal(s.bias_loc, bias_scale).to_event(2)
         )
 
     @staticmethod
