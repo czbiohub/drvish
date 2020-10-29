@@ -59,7 +59,7 @@ class NBVAE(nn.Module):
         # register modules with Pyro
         pyro.module("nbvae", self)
 
-        with pyro.plate("data", len(x)):
+        with pyro.plate("data"):
             with poutine.scale(scale=af):
                 z = pyro.sample(
                     "latent",
@@ -88,7 +88,7 @@ class NBVAE(nn.Module):
     def guide(self, x: torch.Tensor, af: torch.Tensor):
         pyro.module("nbvae", self)
 
-        with pyro.plate("data", len(x)):
+        with pyro.plate("data"):
             # use the encoder to get the parameters used to define q(z|x)
             z_loc, z_scale = self.encoder(x)
             l_loc, l_scale = self.l_encoder(x)
