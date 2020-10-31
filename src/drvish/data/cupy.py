@@ -8,8 +8,9 @@ from torch.utils.dlpack import from_dlpack
 
 
 class CupySparseDataset(Dataset):
-    """Exactly the same as TensorDataset except for sparse cupy arrays (or normal ones,
-    but there's no reason to use those)
+    """
+    Just like a TensorDataset, but supports cupy csr_matrix as well, by using `shape`
+    instead of `size`
     """
 
     def __init__(self, *arrays):
@@ -27,7 +28,8 @@ class CupySparseDataset(Dataset):
 
 
 class CupySparseDataLoader(DataLoader):
-    """DataLoader that converts from sparse cupy array to a dense tensor. For large
+    """
+    DataLoader that converts from sparse cupy array to a dense tensor. For large
     datasets that only fit in GPU memory in sparse form, this can speed up training
     """
 
