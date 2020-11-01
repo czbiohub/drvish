@@ -9,7 +9,7 @@ import pyro.poutine as poutine
 import torch
 import torch.nn as nn
 
-from drvish.models.modules import Encoder, NBDecoder, _normal_prior
+from drvish.models.modules import Encoder, NBDecoder
 
 
 class NBVAE(nn.Module):
@@ -21,6 +21,7 @@ class NBVAE(nn.Module):
     :param lib_loc: Mean for prior distribution on library scaling factor
     :param lib_scale: Scale for prior distribution on library scaling factor
     :param dropout_rate: Dropout rate for neural networks
+    :param scale_factor: For adjusting the ELBO loss
     :param use_cuda: if True, copy parameters into GPU memory
     :param eps: value to add to NB count parameter for numerical stability
     """
@@ -63,15 +64,11 @@ class NBVAE(nn.Module):
 
         with pyro.plate("data", len(x)), poutine.scale(scale=self.scale_factor):
             z = pyro.sample(
-                "latent",
-                dist.Normal(0, x.new_ones(self.n_latent)).to_event(1)
+                "latent", dist.Normal(0, x.new_ones(self.n_latent)).to_event(1)
             )
 
             lib_scale = self.l_scale * x.new_ones(1)
-            l = pyro.sample(
-                "library",
-                dist.Normal(self.l_loc, lib_scale).to_event(1),
-            )
+            l = pyro.sample("library", dist.Normal(self.l_loc, lib_scale).to_event(1),)
 
             log_r, logit = self.decoder(z, l)
 
@@ -96,10 +93,8 @@ class NBVAE(nn.Module):
 
             # sample the latent code z
             pyro.sample(
-                "latent",
-                dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
+                "latent", dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
             )
             pyro.sample(
-                "library",
-                dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
+                "library", dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
             )

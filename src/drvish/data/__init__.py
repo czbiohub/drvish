@@ -18,7 +18,7 @@ class StratifiedSubsetSampler(BatchSampler):
     """
     A batch sampler that generates class-balanced mini-batches of samples, based on the
     input labels. This sampler generates each batch randomly, and does not guarantee
-    that a given sample will appear only once per iteration, or will appear at all. For
+    that a given sample will appear only once per iteration, or will appear at all.
     """
 
     def __init__(

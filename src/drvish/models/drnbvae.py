@@ -25,6 +25,7 @@ class DRNBVAE(nn.Module):
     :param lam_scale: Scaling factor for prior on regression weights
     :param bias_scale: Scaling factor for prior on regression biases
     :param dropout_rate: Dropout rate for neural networks
+    :param scale_factor: For adjusting the ELBO loss
     :param use_cuda: if True, copy parameters into GPU memory
     :param eps: value to add for numerical stability
     """
@@ -120,12 +121,10 @@ class DRNBVAE(nn.Module):
 
             # sample the latent code z
             pyro.sample(
-                "latent",
-                dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
+                "latent", dist.Normal(z_loc, z_scale, validate_args=True).to_event(1)
             )
             pyro.sample(
-                "library",
-                dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
+                "library", dist.Normal(l_loc, l_scale, validate_args=True).to_event(1)
             )
 
             self.lmb(z_loc, labels)

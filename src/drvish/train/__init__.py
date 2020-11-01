@@ -21,15 +21,8 @@ PyroAggMo = (
 )(AggMo)
 
 
-def cos_annealing_factor(epoch: int, max_epoch: int, eta_min: float = 1e-4) -> float:
-    return eta_min + (1.0 - eta_min) * (1.0 - np.cos(np.pi * epoch / max_epoch)) / 2.0
-
-
-def evaluate_step(
-    eval_fn: Callable,
-    data_loader: DataLoader,
-    annealing_factor: float = 1.0,
-    use_cuda: bool = False,
+def evaluate_epoch(
+    eval_fn: Callable, data_loader: DataLoader, use_cuda: bool = False,
 ) -> float:
     """
     Go through a dataset and return the total loss
@@ -37,13 +30,9 @@ def evaluate_step(
     :param eval_fn: typically either SVI.step (for training)
                     or SVI.evaluate_loss (for testing)
     :param data_loader: the dataset to iterate through and evaluate
-    :param annealing_factor: scaling factor for variational loss
     :param use_cuda: if compute is on GPU
     :return:
     """
-    af = torch.tensor(annealing_factor, requires_grad=False)
-    if use_cuda:
-        af = af.cuda()
 
     # initialize loss accumulator
     epoch_loss = 0.0
@@ -51,38 +40,15 @@ def evaluate_step(
     # do a training epoch over each mini-batch x returned by the data loader
     for xs in data_loader:
         if use_cuda:
-            xs = tuple(x.cuda() for x in xs)
+            xs = (x.cuda() for x in xs)
 
         # do ELBO gradient and accumulate loss
-        epoch_loss += eval_fn(*xs, af)
+        epoch_loss += eval_fn(*xs)
 
     # return epoch loss
     total_epoch_loss = epoch_loss / len(data_loader)
 
     return total_epoch_loss
-
-
-def train(
-    svi: pi.SVI,
-    data_loader: DataLoader,
-    annealing_factor: float = 1.0,
-    use_cuda: bool = False,
-) -> float:
-    return evaluate_step(
-        svi.step,
-        data_loader=data_loader,
-        annealing_factor=annealing_factor,
-        use_cuda=use_cuda,
-    )
-
-
-def evaluate(svi: pi.SVI, data_loader: DataLoader, use_cuda: bool = False) -> float:
-    return evaluate_step(
-        svi.evaluate_loss,
-        data_loader=data_loader,
-        annealing_factor=1.0,
-        use_cuda=use_cuda,
-    )
 
 
 def train_until_plateau(
@@ -92,7 +58,6 @@ def train_until_plateau(
     validation_data: DataLoader,
     min_cycles: int = 3,
     threshold: float = 0.01,
-    annealing_factor: Union[Callable, float] = 1.0,
     use_cuda: bool = False,
     verbose: bool = False,
 ) -> Tuple[List[float], List[float]]:
@@ -106,8 +71,6 @@ def train_until_plateau(
     :param validation_data: Validation dataset in the same format
     :param min_cycles: Minimum number of cycles to run before checking for convergence
     :param threshold: Tolerance threshold for calling convergence
-    :param annealing_factor: scaling factor for variational loss, or function that goes
-                             from epoch to an annealing factor
     :param use_cuda: Whether to use the GPU for training
     :param verbose: Print training progress to stdout
     :return: Lists of training and validation loss and correlation values
@@ -124,22 +87,9 @@ def train_until_plateau(
     cycle = 0
 
     for epoch in itertools.count():
-        if callable(annealing_factor):
-            af = annealing_factor(epoch)
-        else:
-            af = annealing_factor
-
-        train_loss.append(
-            train(
-                svi=svi,
-                data_loader=training_data,
-                use_cuda=use_cuda,
-                annealing_factor=af,
-            )
-        )
-
+        train_loss.append(evaluate_epoch(svi.step, training_data, use_cuda=use_cuda))
         val_loss.append(
-            evaluate(svi=svi, data_loader=validation_data, use_cuda=use_cuda)
+            evaluate_epoch(svi.evaluate_loss, validation_data, use_cuda=use_cuda)
         )
 
         scheduler.step(epoch)
