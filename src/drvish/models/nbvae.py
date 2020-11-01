@@ -34,6 +34,7 @@ class NBVAE(nn.Module):
         lib_loc: float = 7.5,
         lib_scale: float = 0.5,
         dropout_rate: float = 0.1,
+        scale_factor: float = 1.0,
         use_cuda: bool = False,
         eps: float = 1e-6,
     ):
@@ -44,8 +45,8 @@ class NBVAE(nn.Module):
 
         self.eps = torch.tensor(eps, requires_grad=False)
 
-        self.z_prior = _normal_prior(0.0, 1.0, 1, n_latent, use_cuda=use_cuda)
-        self.l_prior = _normal_prior(lib_loc, lib_scale, 1, 1, use_cuda=use_cuda)
+        self.l_loc = lib_loc
+        self.l_scale = lib_scale
 
         if use_cuda:
             # calling cuda() here will put all the parameters of
@@ -54,23 +55,23 @@ class NBVAE(nn.Module):
 
         self.use_cuda = use_cuda
         self.n_latent = n_latent
+        self.scale_factor = scale_factor
 
-    def model(self, x: torch.Tensor, af: torch.Tensor):
+    def model(self, x: torch.Tensor):
         # register modules with Pyro
         pyro.module("nbvae", self)
 
-        with pyro.plate("data"):
-            with poutine.scale(scale=af):
-                z = pyro.sample(
-                    "latent",
-                    self.z_prior.expand(
-                        torch.Size((x.size(0), self.n_latent))
-                    ).to_event(1),
-                )
-                l = pyro.sample(
-                    "library",
-                    self.l_prior.expand(torch.Size((x.size(0), 1))).to_event(1),
-                )
+        with pyro.plate("data", len(x)), poutine.scale(scale=self.scale_factor):
+            z = pyro.sample(
+                "latent",
+                dist.Normal(0, x.new_ones(self.n_latent)).to_event(1)
+            )
+
+            lib_scale = self.l_scale * x.new_ones(1)
+            l = pyro.sample(
+                "library",
+                dist.Normal(self.l_loc, lib_scale).to_event(1),
+            )
 
             log_r, logit = self.decoder(z, l)
 
@@ -85,21 +86,20 @@ class NBVAE(nn.Module):
             )
 
     # define the guide (i.e. variational distribution) q(z|x)
-    def guide(self, x: torch.Tensor, af: torch.Tensor):
+    def guide(self, x: torch.Tensor):
         pyro.module("nbvae", self)
 
-        with pyro.plate("data"):
+        with pyro.plate("data", len(x)), poutine.scale(scale=self.scale_factor):
             # use the encoder to get the parameters used to define q(z|x)
             z_loc, z_scale = self.encoder(x)
             l_loc, l_scale = self.l_encoder(x)
 
             # sample the latent code z
-            with poutine.scale(scale=af):
-                pyro.sample(
-                    "latent",
-                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
-                )
-                pyro.sample(
-                    "library",
-                    dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
-                )
+            pyro.sample(
+                "latent",
+                dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
+            )
+            pyro.sample(
+                "library",
+                dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
+            )

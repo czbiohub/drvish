@@ -11,19 +11,6 @@ import pyro.distributions as dist
 from pyro.nn import PyroModule, PyroParam, PyroSample
 
 
-def _normal_prior(loc: float, scale: float, *sizes: int, use_cuda: bool = False):
-    """Helper function to make a normal distribution on the correct device"""
-
-    loc = loc * torch.ones(*sizes, requires_grad=False)
-    scale = scale * torch.ones(*sizes, requires_grad=False)
-
-    if use_cuda:
-        loc = loc.cuda()
-        scale = scale.cuda()
-
-    return dist.Normal(loc, scale)
-
-
 class FCLayers(nn.Module):
     """A helper class to build fully-connected layers for a neural network.
 

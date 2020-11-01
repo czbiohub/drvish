@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import constraints
 
-from drvish.models.modules import Encoder, LinearMultiBias, NBDecoder, _normal_prior
+from drvish.models.modules import Encoder, LinearMultiBias, NBDecoder
 
 
 class DRNBVAE(nn.Module):
@@ -43,6 +43,7 @@ class DRNBVAE(nn.Module):
         lam_scale: float = 5.0,
         bias_scale: float = 10.0,
         dropout_rate: float = 0.1,
+        scale_factor: float = 1.0,
         use_cuda: bool = False,
         eps: float = 1e-6,
     ):
@@ -58,8 +59,8 @@ class DRNBVAE(nn.Module):
 
         self.eps = torch.tensor(eps, requires_grad=False)
 
-        self.z_prior = _normal_prior(0.0, 1.0, 1, n_latent, use_cuda=use_cuda)
-        self.l_prior = _normal_prior(lib_loc, lib_scale, 1, 1, use_cuda=use_cuda)
+        self.l_loc = lib_loc
+        self.l_scale = lib_scale
 
         if use_cuda:
             # calling cuda() here will put all the parameters of
@@ -68,26 +69,20 @@ class DRNBVAE(nn.Module):
 
         self.n_latent = n_latent
         self.n_classes = n_classes
+        self.scale_factor = scale_factor
 
     # define the model p(x|z)p(z)
-    def model(
-        self, x: torch.Tensor, labels: torch.Tensor, y: torch.Tensor, af: torch.Tensor
-    ):
+    def model(self, x: torch.Tensor, labels: torch.Tensor, y: torch.Tensor):
         # register modules with Pyro
         pyro.module("drnbvae", self)
 
-        with pyro.plate("data"):
-            with poutine.scale(scale=af):
-                z = pyro.sample(
-                    "latent",
-                    self.z_prior.expand(
-                        torch.Size((x.size(0), self.n_latent))
-                    ).to_event(1),
-                )
-                l = pyro.sample(
-                    "library",
-                    self.l_prior.expand(torch.Size((x.size(0), 1))).to_event(1),
-                )
+        with pyro.plate("data", len(x)), poutine.scale(scale=self.scale_factor):
+            z = pyro.sample(
+                "latent", dist.Normal(0, x.new_ones(self.n_latent)).to_event(1)
+            )
+
+            lib_scale = self.l_scale * x.new_ones(1)
+            l = pyro.sample("library", dist.Normal(self.l_loc, lib_scale).to_event(1))
 
             log_r, logit = self.decoder(z, l)
 
@@ -114,26 +109,23 @@ class DRNBVAE(nn.Module):
         )
 
     # define the guide (i.e. variational distribution) q(z|x)
-    def guide(
-        self, x: torch.Tensor, labels: torch.Tensor, y: torch.Tensor, af: torch.Tensor
-    ):
+    def guide(self, x: torch.Tensor, labels: torch.Tensor, y: torch.Tensor):
         # register modules with Pyro
         pyro.module("drnbvae", self)
 
-        with pyro.plate("data"):
+        with pyro.plate("data", len(x)), poutine.scale(scale=self.scale_factor):
             # use the encoder to get the parameters used to define q(z|x)
             z_loc, z_scale = self.encoder(x)
             l_loc, l_scale = self.l_encoder(x)
 
             # sample the latent code z
-            with poutine.scale(scale=af):
-                pyro.sample(
-                    "latent",
-                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
-                )
-                pyro.sample(
-                    "library",
-                    dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
-                )
+            pyro.sample(
+                "latent",
+                dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
+            )
+            pyro.sample(
+                "library",
+                dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
+            )
 
             self.lmb(z_loc, labels)
