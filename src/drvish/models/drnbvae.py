@@ -27,7 +27,7 @@ class DRNBVAE(nn.Module):
     :param dropout_rate: Dropout rate for neural networks
     :param scale_factor: For adjusting the ELBO loss
     :param use_cuda: if True, copy parameters into GPU memory
-    :param eps: value to add for numerical stability
+    :param epsilon: value to add for numerical stability
     """
 
     def __init__(
@@ -46,7 +46,7 @@ class DRNBVAE(nn.Module):
         dropout_rate: float = 0.1,
         scale_factor: float = 1.0,
         use_cuda: bool = False,
-        eps: float = 1e-6,
+        epsilon: float = 1e-6,
     ):
         super().__init__()
         # create the encoder and decoder networks
@@ -58,7 +58,7 @@ class DRNBVAE(nn.Module):
             n_latent, n_drugs, n_conditions, lam_scale, bias_scale
         )
 
-        self.eps = torch.tensor(eps, requires_grad=False)
+        self.epsilon = torch.tensor(epsilon, requires_grad=False)
 
         self.l_loc = lib_loc
         self.l_scale = lib_scale
@@ -90,24 +90,13 @@ class DRNBVAE(nn.Module):
             pyro.sample(
                 "obs",
                 dist.NegativeBinomial(
-                    total_count=torch.exp(log_r) + self.eps,
-                    logits=logit,
-                    validate_args=True,
+                    total_count=torch.exp(log_r) + self.epsilon, logits=logit
                 ).to_event(1),
                 obs=x,
             )
 
         mean_dr_logit = self.lmb.calc_response(z, labels)
-
-        pyro.sample(
-            "drs",
-            dist.Normal(
-                loc=mean_dr_logit,
-                scale=torch.ones_like(mean_dr_logit),
-                validate_args=True,
-            ).to_event(3),
-            obs=y,
-        )
+        pyro.sample("drs", dist.Normal(loc=mean_dr_logit, scale=1).to_event(3), obs=y)
 
     # define the guide (i.e. variational distribution) q(z|x)
     def guide(self, x: torch.Tensor, labels: torch.Tensor, y: torch.Tensor):
@@ -120,11 +109,8 @@ class DRNBVAE(nn.Module):
             l_loc, l_scale = self.l_encoder(x)
 
             # sample the latent code z
-            pyro.sample(
-                "latent", dist.Normal(z_loc, z_scale, validate_args=True).to_event(1)
-            )
-            pyro.sample(
-                "library", dist.Normal(l_loc, l_scale, validate_args=True).to_event(1)
-            )
+            z = pyro.sample("latent", dist.Normal(z_loc, z_scale).to_event(1))
+            pyro.sample("library", dist.Normal(l_loc, l_scale).to_event(1))
 
-        self.lmb(z_loc, labels)
+        mean_dr_logit = self.lmb(z, labels)
+        pyro.sample("drs", dist.Normal(loc=mean_dr_logit, scale=1).to_event(3))
