@@ -95,7 +95,7 @@ class DRNBVAE(nn.Module):
                 obs=x,
             )
 
-        mean_dr_logit = self.lmb.calc_response(z, labels)
+        mean_dr_logit = self.lmb(z, labels)
         pyro.sample("drs", dist.Normal(loc=mean_dr_logit, scale=1).to_event(3), obs=y)
 
     # define the guide (i.e. variational distribution) q(z|x)
@@ -112,5 +112,4 @@ class DRNBVAE(nn.Module):
             z = pyro.sample("latent", dist.Normal(z_loc, z_scale).to_event(1))
             pyro.sample("library", dist.Normal(l_loc, l_scale).to_event(1))
 
-        mean_dr_logit = self.lmb(z, labels)
-        pyro.sample("drs", dist.Normal(loc=mean_dr_logit, scale=1).to_event(3))
+        self.lmb(z, labels)
