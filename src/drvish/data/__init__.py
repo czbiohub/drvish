@@ -21,9 +21,7 @@ class StratifiedSubsetSampler(BatchSampler):
     that a given sample will appear only once per iteration, or will appear at all.
     """
 
-    def __init__(
-        self, indices: np.ndarray, class_vector: np.ndarray, batch_size: int,
-    ):
+    def __init__(self, indices: np.ndarray, class_vector: np.ndarray, batch_size: int):
         """
         :param indices: indices to provide samples from
         :param class_vector: a vector of class labels
@@ -90,7 +88,7 @@ def split_dataset(
 def split_labeled_dataset(
     *xs: torch.Tensor,
     labels: np.ndarray,
-    target: torch.Tensor,
+    y: torch.Tensor,
     batch_size: int,
     train_p: float,
     dataset_cls: Type[Dataset] = TensorTargetDataset,
@@ -102,7 +100,7 @@ def split_labeled_dataset(
 
     :param xs: tensor(s) of data to split into two parts
     :param labels: a label (int) for each sample that indicates the class
-    :param target: tensor of response data
+    :param y: tensor of response data
     :param batch_size: number of samples to provide in a single iteration
     :param train_p: proportion of the data to put in the training set
     :param dataset_cls: class constructor for the dataset
@@ -115,7 +113,7 @@ def split_labeled_dataset(
     example_labels = labels[example_indices]
     n_train = int(train_p * n_cells)
 
-    dataset = dataset_cls(*xs, torch.from_numpy(labels), target)
+    dataset = dataset_cls(*xs, torch.from_numpy(labels), y)
 
     data_loader_train = dataloader_cls(
         dataset=dataset,
