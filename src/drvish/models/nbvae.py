@@ -20,10 +20,9 @@ class NBVAE(nn.Module):
     :param layers: Number and size of hidden layers used for encoder and decoder NNs
     :param lib_loc: Mean for prior distribution on library scaling factor
     :param lib_scale: Scale for prior distribution on library scaling factor
-    :param dropout_rate: Dropout rate for neural networks
     :param scale_factor: For adjusting the ELBO loss
-    :param use_cuda: if True, copy parameters into GPU memory
-    :param epsilon: value to add to NB count parameter for numerical stability
+    :param epsilon: Value to add to NB count parameter for numerical stability
+    :param device: If not None, tensors will be copied to cuda device
     """
 
     def __init__(
@@ -34,27 +33,25 @@ class NBVAE(nn.Module):
         layers: Sequence[int] = (64, 64, 64),
         lib_loc: float = 7.5,
         lib_scale: float = 0.5,
-        dropout_rate: float = 0.1,
         scale_factor: float = 1.0,
-        use_cuda: bool = False,
         epsilon: float = 1e-6,
+        device: torch.device = None,
     ):
         super().__init__()
-        self.encoder = Encoder(n_input, n_latent, layers, dropout_rate)
-        self.l_encoder = Encoder(n_input, 1, layers, dropout_rate)
-        self.decoder = NBDecoder(n_latent, n_input, layers[::-1], dropout_rate)
+        self.encoder = Encoder(n_input, n_latent, layers)
+        self.l_encoder = Encoder(n_input, 1, layers)
+        self.decoder = NBDecoder(n_latent, n_input, layers[::-1])
 
-        self.epsilon = torch.tensor(epsilon, requires_grad=False)
+        self.epsilon = torch.tensor(epsilon).to(device)
 
-        self.l_loc = lib_loc
-        self.l_scale = lib_scale
+        self.l_loc = torch.tensor(lib_loc).to(device)
+        self.l_scale = lib_scale * torch.ones(1, device=device)
 
-        if use_cuda:
+        if device is not None:
             # calling cuda() here will put all the parameters of
             # the encoder and decoder networks into gpu memory
-            self.cuda()
+            self.cuda(device)
 
-        self.use_cuda = use_cuda
         self.n_latent = n_latent
         self.scale_factor = scale_factor
 
@@ -67,8 +64,9 @@ class NBVAE(nn.Module):
                 "latent", dist.Normal(0, x.new_ones(self.n_latent)).to_event(1)
             )
 
-            lib_scale = self.l_scale * x.new_ones(1)
-            l = pyro.sample("library", dist.Normal(self.l_loc, lib_scale).to_event(1))
+            l = pyro.sample(
+                "library", dist.Normal(self.l_loc, self.l_scale).to_event(1)
+            )
 
             log_r, logit = self.decoder(z, l)
 

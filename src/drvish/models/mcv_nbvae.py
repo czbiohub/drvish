@@ -42,7 +42,7 @@ class MCVNBVAE(nn.Module):
         self.l_encoder = Encoder(n_input, 1, layers, dropout_rate)
         self.decoder = NBDecoder(n_latent, n_input, layers[::-1], dropout_rate)
 
-        self.eps = torch.tensor(eps, requires_grad=False)
+        self.eps = torch.tensor(eps)
 
         self.z_prior = _normal_prior(0.0, 1.0, 1, n_latent, use_cuda=use_cuda)
         self.l_prior = _normal_prior(lib_loc, lib_scale, 1, 1, use_cuda=use_cuda)

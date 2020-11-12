@@ -7,50 +7,25 @@ import torch
 import torch.nn as nn
 from torch.distributions import constraints
 
+import pyro
 import pyro.distributions as dist
 from pyro.nn import PyroModule, PyroParam, PyroSample
 
 
-class FCLayers(nn.Module):
-    """A helper class to build fully-connected layers for a neural network.
+def make_fc(dims: Sequence[int]):
+    layers = []
 
-    :param n_input: The dimensionality of the input
-    :param layers: Size of the intermediate layers
-    :param dropout_rate: Dropout rate to apply to each of the hidden layers
-    """
+    for in_dim, out_dim in zip(dims, dims[1:]):
+        layers.append(nn.BatchNorm1d(in_dim))
+        layers.append(nn.ReLU())
+        layers.append(nn.Linear(in_dim, out_dim))
 
-    def __init__(
-        self, layers: Sequence[int], dropout_rate: float = 0.1, use_bias: bool = True
-    ):
-        super().__init__()
-        self.fc_layers = nn.Sequential(
-            *(
-                nn.Sequential(
-                    nn.BatchNorm1d(n_in, eps=1e-3, momentum=0.01),
-                    nn.ReLU(),
-                    nn.Linear(n_in, n_out, bias=use_bias),
-                    nn.Dropout(p=dropout_rate),
-                )
-                for n_in, n_out in zip(layers[:-1], layers[1:])
-            )
-        )
+    return nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward computation on ``x``.
 
-        :param x: tensor of values with shape ``(n_input,)``
-        :return: output of fully-connected layers
-        """
-
-        for layers in self.fc_layers:
-            for layer in layers:
-                if isinstance(layer, nn.BatchNorm1d) and x.dim() == 3:
-                    x = torch.cat(
-                        [(layer(slice_x)).unsqueeze(0) for slice_x in x], dim=0
-                    )
-                else:
-                    x = layer(x)
-        return x
+# Splits a tensor in half along the final dimension
+def split_in_half(t: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    return t.reshape(t.shape[:-1] + (2, -1)).unbind(-2)
 
 
 class Encoder(nn.Module):
@@ -63,30 +38,23 @@ class Encoder(nn.Module):
     :param dropout_rate: Dropout rate to apply to each of the hidden layers
     """
 
-    def __init__(
-        self, n_input: int, n_output: int, layers: Sequence[int], dropout_rate: float
-    ):
+    def __init__(self, n_input: int, n_output: int, layers: Sequence[int]):
         super().__init__()
 
-        self.encoder = FCLayers([n_input] + list(layers), dropout_rate=dropout_rate)
-        self.mean_encoder = FCLayers([layers[-1], n_output], dropout_rate=0.0)
-        self.var_encoder = FCLayers([layers[-1], n_output], dropout_rate=0.0)
+        self.fc = make_fc([n_input] + list(layers) + [2 * n_output])
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         r"""The forward computation for a single sample.
+         #. Transform input counts with sqrt
          #. Encodes the data into latent space using the encoder network
          #. Generates a mean \\( q_m \\) and variance \\( q_v \\) (clamped to \\( [-5, 5] \\))
          #. Samples a new value from an i.i.d. multivariate normal \\( \\sim N(q_m, \\mathbf{I}q_v) \\)
 
-        :param x: tensor with shape (n_input,)
+        :param x: tensor of counts with shape (n_input,)
         :return: tensors of shape ``(n_latent,)`` for mean and var, and sample
         """
-        # Parameters for latent distribution
-        q = self.encoder(torch.sqrt(x))
-        q_m = self.mean_encoder(q)
-
-        # computational stability safeguard
-        q_v = torch.exp(torch.clamp(self.var_encoder(q), -5, 5))
+        q_m, q_v = split_in_half(self.fc(torch.sqrt(x)))
+        q_v = nn.functional.softplus(q_v)
 
         return q_m, q_v
 
@@ -101,22 +69,10 @@ class NBDecoder(nn.Module):
     :param dropout_rate: Dropout rate to apply to each of the hidden layers
     """
 
-    def __init__(
-        self, n_input: int, n_output: int, layers: Sequence[int], dropout_rate: float
-    ):
+    def __init__(self, n_input: int, n_output: int, layers: Sequence[int]):
         super().__init__()
-        self.px_decoder = FCLayers(
-            layers=[n_input] + list(layers), dropout_rate=dropout_rate
-        )
 
-        # mean gamma
-        self.scale_decoder = nn.Sequential(
-            FCLayers(layers=[layers[-1], n_output], dropout_rate=0.0),
-            nn.LogSoftmax(dim=-1),
-        )
-
-        # dispersion: here we only deal with gene-cell dispersion case
-        self.r_decoder = FCLayers(layers=[layers[-1], n_output], dropout_rate=0.0)
+        self.fc = make_fc([n_input] + list(layers) + [2 * n_output])
 
     def forward(
         self, z: torch.Tensor, library: torch.Tensor
@@ -134,10 +90,8 @@ class NBDecoder(nn.Module):
         """
 
         # The decoder returns values for the parameters of the NB distribution
-        px = self.px_decoder(z)
-        scale = self.scale_decoder(px)
-
-        log_r = self.r_decoder(px)
+        scale, log_r = split_in_half(self.fc(z))
+        scale = nn.functional.log_softmax(scale, dim=-1)
 
         logit = library + scale - log_r
 
@@ -167,18 +121,26 @@ class LinearMultiBias(PyroModule):
     ):
         super().__init__()
 
+        # priors
+        self.weight = PyroSample(
+            dist.Laplace(0.0, lam_scale).expand([n_input, n_targets]).to_event(2)
+        )
+        self.bias = PyroSample(
+            dist.Normal(0.0, bias_scale).expand([n_conditions, n_targets]).to_event(2)
+        )
+
+        # parameters for guide
         self.weight_loc = nn.Parameter(
             torch.nn.init.xavier_uniform_(torch.Tensor(n_input, n_targets))
         )
-        self.weight = PyroSample(
-            lambda s: dist.Laplace(s.weight_loc, lam_scale).to_event(2)
+        self.weight_scale = PyroParam(
+            torch.ones(n_input, n_targets), constraint=constraints.positive
         )
-
         self.bias_loc = nn.Parameter(
             torch.nn.init.xavier_uniform_(torch.Tensor(n_conditions, n_targets))
         )
-        self.bias = PyroSample(
-            lambda s: dist.Normal(s.bias_loc, bias_scale).to_event(2)
+        self.bias_scale = PyroParam(
+            torch.ones(n_conditions, n_targets), constraint=constraints.positive
         )
 
     @staticmethod
@@ -210,3 +172,11 @@ class LinearMultiBias(PyroModule):
     def calc_response(self, x: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """This is the same as the forward method but will not sample weights"""
         return self.logit_mean_sigmoid(x, self.weight_loc, self.bias_loc, labels)
+
+    def sample_guide(self):
+        pyro.sample(
+            "weight", dist.Normal(self.weight_loc, self.weight_scale).to_event(2)
+        )
+        pyro.sample(
+            "bias", dist.Normal(self.bias_loc, self.bias_scale).to_event(2)
+        )

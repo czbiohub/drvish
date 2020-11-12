@@ -3,6 +3,7 @@ from typing import Sequence
 import pyro
 import pyro.distributions as dist
 import pyro.poutine as poutine
+
 import torch
 import torch.nn as nn
 from torch.distributions import constraints
@@ -22,12 +23,12 @@ class DRNBVAE(nn.Module):
     :param layers: Number and size of hidden layers used for encoder and decoder NNs
     :param lib_loc: Mean for prior distribution on library scaling factor
     :param lib_scale: Scale for prior distribution on library scaling factor
-    :param lam_scale: Scaling factor for prior on regression weights
-    :param bias_scale: Scaling factor for prior on regression biases
-    :param dropout_rate: Dropout rate for neural networks
+    :param lam_scale: Scale for prior on regression weights
+    :param bias_scale: Scale for prior on regression biases
+    :param sigma_scale: Scale for drug response observations
     :param scale_factor: For adjusting the ELBO loss
-    :param use_cuda: if True, copy parameters into GPU memory
-    :param epsilon: value to add for numerical stability
+    :param epsilon: Value to add for numerical stability
+    :param device: If not None, tensors will be copied to cuda device
     """
 
     def __init__(
@@ -43,30 +44,35 @@ class DRNBVAE(nn.Module):
         lib_scale: float = 0.5,
         lam_scale: float = 5.0,
         bias_scale: float = 10.0,
-        dropout_rate: float = 0.1,
+        sigma_scale: float = 1.0,
         scale_factor: float = 1.0,
-        use_cuda: bool = False,
         epsilon: float = 1e-6,
+        device: torch.device = None,
     ):
         super().__init__()
         # create the encoder and decoder networks
-        self.encoder = Encoder(n_input, n_latent, layers, dropout_rate)
-        self.l_encoder = Encoder(n_input, 1, layers, dropout_rate)
-        self.decoder = NBDecoder(n_latent, n_input, layers[::-1], dropout_rate)
+        self.encoder = Encoder(n_input, n_latent, layers)
+        self.l_encoder = Encoder(n_input, 1, layers)
+        self.decoder = NBDecoder(n_latent, n_input, layers[::-1])
 
         self.lmb = LinearMultiBias(
-            n_latent, n_drugs, n_conditions, lam_scale, bias_scale
+            n_latent,
+            n_drugs,
+            n_conditions,
+            torch.tensor(lam_scale).to(device),
+            torch.tensor(bias_scale).to(device)
         )
 
-        self.epsilon = torch.tensor(epsilon, requires_grad=False)
+        self.epsilon = torch.tensor(epsilon).to(device)
+        self.sigma_scale = torch.tensor(sigma_scale).to(device)
 
-        self.l_loc = lib_loc
-        self.l_scale = lib_scale
+        self.l_loc = torch.tensor(lib_loc).to(device)
+        self.l_scale = lib_scale * torch.ones(1, device=device)
 
-        if use_cuda:
+        if device is not None:
             # calling cuda() here will put all the parameters of
             # the encoder and decoder networks into gpu memory
-            self.cuda()
+            self.cuda(device)
 
         self.n_latent = n_latent
         self.n_classes = n_classes
@@ -82,8 +88,9 @@ class DRNBVAE(nn.Module):
                 "latent", dist.Normal(0, x.new_ones(self.n_latent)).to_event(1)
             )
 
-            lib_scale = self.l_scale * x.new_ones(1)
-            l = pyro.sample("library", dist.Normal(self.l_loc, lib_scale).to_event(1))
+            l = pyro.sample(
+                "library", dist.Normal(self.l_loc, self.l_scale).to_event(1)
+            )
 
             log_r, logit = self.decoder(z, l)
 
@@ -95,8 +102,10 @@ class DRNBVAE(nn.Module):
                 obs=x,
             )
 
-        mean_dr_logit = self.lmb.calc_response(z, labels)
-        pyro.sample("drs", dist.Normal(loc=mean_dr_logit, scale=1).to_event(3), obs=y)
+        mean_dr_logit = self.lmb(z, labels)
+        pyro.sample(
+            "drs", dist.Normal(loc=mean_dr_logit, scale=self.sigma_scale), obs=y
+        )
 
     # define the guide (i.e. variational distribution) q(z|x)
     def guide(self, x: torch.Tensor, labels: torch.Tensor, y: torch.Tensor):
@@ -109,7 +118,7 @@ class DRNBVAE(nn.Module):
             l_loc, l_scale = self.l_encoder(x)
 
             # sample the latent code z
-            z = pyro.sample("latent", dist.Normal(z_loc, z_scale).to_event(1))
+            pyro.sample("latent", dist.Normal(z_loc, z_scale).to_event(1))
             pyro.sample("library", dist.Normal(l_loc, l_scale).to_event(1))
 
-        self.lmb(z, labels)
+        self.lmb.sample_guide()
