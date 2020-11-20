@@ -30,18 +30,18 @@ def split_in_half(t: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
 
 class Encoder(nn.Module):
     r"""Encodes data of ``n_input`` dimensions into a latent space of ``n_output``
-    dimensions using a fully-connected neural network of ``layers``.
+    dimensions using a fully-connected neural network of ``layers``. Produces mean and
+    variance tensors for latent space and library size.
 
     :param n_input: The dimensionality of the input (data space)
     :param n_output: The dimensionality of the output (latent space)
     :param layers: The number and size of fully-connected hidden layers
-    :param dropout_rate: Dropout rate to apply to each of the hidden layers
     """
 
     def __init__(self, n_input: int, n_output: int, layers: Sequence[int]):
         super().__init__()
 
-        self.fc = make_fc([n_input] + list(layers) + [2 * n_output])
+        self.fc = make_fc([n_input] + list(layers) + [2 * n_output + 2])
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         r"""The forward computation for a single sample.
@@ -54,9 +54,10 @@ class Encoder(nn.Module):
         :return: tensors of shape ``(n_latent,)`` for mean and var, and sample
         """
         q_m, q_v = split_in_half(self.fc(torch.sqrt(x)))
-        q_v = nn.functional.softplus(q_v)
 
-        return q_m, q_v
+        z_loc, z_scale = q_m[..., :-1], nn.functional.softplus(q_v[..., :-1])
+        l_loc, l_scale = q_m[..., -1:], nn.functional.softplus(q_v[..., -1:])
+        return z_loc, z_scale, l_loc, l_scale
 
 
 class NBDecoder(nn.Module):
@@ -66,7 +67,6 @@ class NBDecoder(nn.Module):
     :param n_input: The dimensionality of the input (latent space)
     :param n_output: The dimensionality of the output (data space)
     :param layers: Size and number of fully-connected hidden layers
-    :param dropout_rate: Dropout rate to apply to each of the hidden layers
     """
 
     def __init__(self, n_input: int, n_output: int, layers: Sequence[int]):
@@ -123,10 +123,10 @@ class LinearMultiBias(PyroModule):
 
         # priors
         self.weight = PyroSample(
-            dist.Laplace(0.0, lam_scale).expand([n_input, n_targets]).to_event(2)
+            dist.Laplace(0., lam_scale).expand([n_input, n_targets]).to_event(2)
         )
         self.bias = PyroSample(
-            dist.Normal(0.0, bias_scale).expand([n_conditions, n_targets]).to_event(2)
+            dist.Normal(0., bias_scale).expand([n_conditions, n_targets]).to_event(2)
         )
 
         # parameters for guide

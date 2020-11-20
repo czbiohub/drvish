@@ -39,7 +39,6 @@ class NBVAE(nn.Module):
     ):
         super().__init__()
         self.encoder = Encoder(n_input, n_latent, layers)
-        self.l_encoder = Encoder(n_input, 1, layers)
         self.decoder = NBDecoder(n_latent, n_input, layers[::-1])
 
         self.epsilon = torch.tensor(epsilon).to(device)
@@ -84,8 +83,7 @@ class NBVAE(nn.Module):
 
         with pyro.plate("data", len(x)), poutine.scale(scale=self.scale_factor):
             # use the encoder to get the parameters used to define q(z|x)
-            z_loc, z_scale = self.encoder(x)
-            l_loc, l_scale = self.l_encoder(x)
+            z_loc, z_scale, l_loc, l_scale = self.encoder(x)
 
             # sample the latent code z
             pyro.sample("latent", dist.Normal(z_loc, z_scale).to_event(1))
