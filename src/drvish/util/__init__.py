@@ -15,6 +15,7 @@ def build_dr_dataset(
     n_features: int,
     n_drugs: int,
     n_conditions: int,
+    class_cov: np.ndarray = None,
     prog_kw: dict = None,
     class_kw: dict = None,
     drug_kw: dict = None,
@@ -50,7 +51,7 @@ def build_dr_dataset(
     latent_exp = np.empty((n_cells_per_class, n_classes, n_latent))
     for i in np.arange(n_classes):
         latent_exp[:, i, :] = simscity.latent.gen_class_samples(
-            n_cells_per_class, classes[i, :]
+            n_cells_per_class, classes[i, :], cov=class_cov,
         )
 
     exp = np.dot(latent_exp, programs)

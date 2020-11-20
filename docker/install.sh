@@ -21,7 +21,7 @@ else
 fi
 
 git clone https://github.com/czbiohub/simscity.git
-(cd simscity && python setup.py install && cd ${HOME})
+(cd simscity && pip install -e . && cd ${HOME})
 
 git clone https://github.com/czbiohub/drvish.git
-(cd drvish && python setup.py install && cd ${HOME})
+(cd drvish && pip install -e . && cd ${HOME})

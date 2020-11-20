@@ -1,37 +1,38 @@
 #!/usr/bin/env python
 
+from typing import Type
+
 import numpy as np
 
 import torch
 
 from sklearn.model_selection import StratifiedShuffleSplit
-from torch.utils.data import DataLoader, TensorDataset
-from torch.utils.data.sampler import SubsetRandomSampler, Sampler
+from torch.utils.data import DataLoader, Dataset, TensorDataset
+from torch.utils.data.sampler import SubsetRandomSampler, BatchSampler
+
+from drvish.data.cupy import CupySparseDataLoader, CupySparseDataset
+from drvish.data.target import DataTargetLoader, TensorTargetDataset
 
 
-class TensorTargetDataset(TensorDataset):
-    def __init__(self, *tensors: torch.Tensor):
-        super().__init__(*tensors[:-1])
-        self.class_idx = torch.arange(tensors[0].size(1), requires_grad=False)
-        self.target = tensors[-1]
+class StratifiedSubsetSampler(BatchSampler):
+    """
+    A batch sampler that generates class-balanced mini-batches of samples, based on the
+    input labels. This sampler generates each batch randomly, and does not guarantee
+    that a given sample will appear only once per iteration, or will appear at all.
+    """
 
-    def __getitem__(self, index):
-        return tuple(tensor[index, self.class_idx, ...] for tensor in self.tensors)
-
-    def __len__(self):
-        return self.tensors[0].size(1)
-
-
-class StratifiedSubsetSampler:
     def __init__(self, indices: np.ndarray, class_vector: np.ndarray, batch_size: int):
         """
         :param indices: indices to provide samples from
         :param class_vector: a vector of class labels
         :param batch_size: number of samples to provide per iteration
         """
+        super().__init__(None, batch_size, False)
+
+        assert batch_size < len(class_vector)
+
         self.indices = indices
-        self.batch_size = batch_size
-        self.n_splits = int(class_vector.shape[0] / batch_size)
+        self.n_splits = class_vector.shape[0] // batch_size
         self.class_vector = class_vector
 
     def __iter__(self):
@@ -45,83 +46,87 @@ class StratifiedSubsetSampler:
         return self.n_splits
 
 
-class StratifiedSubset2DSampler(Sampler):
-    def __init__(self, indices, n_classes: int):
-        super().__init__(None)
-        self.indices = indices
-        self.n_classes = n_classes
-
-    def __iter__(self):
-        return zip(
-            *(
-                tuple(self.indices[i] for i in torch.randperm(len(self.indices)))
-                for _ in range(self.n_classes)
-            )
-        )
-
-    def __len__(self):
-        return len(self.indices)
-
-
-class DataLoader2D(DataLoader):
-    def __iter__(self):
-        for indices in iter(self.batch_sampler):
-            batch = self.collate_fn([self.dataset[i] for i in indices])
-            batch.append(self.dataset.target)
-
-            yield batch
-
-
 def split_dataset(
-    *xs: torch.Tensor, batch_size: int, train_p: float, use_cuda: bool = False
+    *xs: torch.Tensor,
+    batch_size: int,
+    train_p: float,
+    dataset_cls: Type[Dataset] = TensorDataset,
+    dataloader_cls: Type[DataLoader] = DataLoader,
 ):
+    """
+    Split a dataset of tensors into training and validation sets with a given split.
+
+    :param xs: tensor(s) of data to split into two parts
+    :param batch_size: number of samples to provide in a single iteration
+    :param train_p: proportion of the data to put in the training set
+    :param dataset_cls: class constructor for the dataset
+    :param dataloader_cls: class constructor for data loader
+    :return: two DataLoaders, one for training and another for validation
+    """
     n_cells = xs[0].shape[0]
 
     example_indices = np.random.permutation(n_cells)
     n_train = int(train_p * n_cells)
 
-    dataset = TensorDataset(*xs)
+    dataset = dataset_cls(*xs)
 
-    data_loader_train = DataLoader(
+    data_loader_train = dataloader_cls(
         dataset=dataset,
         batch_size=batch_size,
-        pin_memory=use_cuda,
         sampler=SubsetRandomSampler(example_indices[:n_train]),
     )
 
-    data_loader_test = DataLoader(
+    data_loader_validation = dataloader_cls(
         dataset=dataset,
         batch_size=batch_size,
-        pin_memory=use_cuda,
         sampler=SubsetRandomSampler(example_indices[n_train:]),
     )
 
-    return data_loader_train, data_loader_test
+    return data_loader_train, data_loader_validation
 
 
-def split_2d_dataset(
-    *xs: torch.Tensor, batch_size: int, train_p: float, use_cuda: bool = False
+def split_labeled_dataset(
+    *xs: torch.Tensor,
+    labels: np.ndarray,
+    y: torch.Tensor,
+    batch_size: int,
+    train_p: float,
+    dataset_cls: Type[Dataset] = TensorTargetDataset,
+    dataloader_cls: Type[DataLoader] = DataTargetLoader,
 ):
-    n_cells_per_class = xs[0].shape[0]
-    n_classes = xs[0].shape[1]
+    """
+    Split a labeled dataset of tensors into training and validation sets, and provide
+    stratified samples over the two sets so that they are always class-balanced.
 
-    example_indices = np.random.permutation(n_cells_per_class)
-    n_train = int(train_p * n_cells_per_class)
+    :param xs: tensor(s) of data to split into two parts
+    :param labels: a label (int) for each sample that indicates the class
+    :param y: tensor of response data
+    :param batch_size: number of samples to provide in a single iteration
+    :param train_p: proportion of the data to put in the training set
+    :param dataset_cls: class constructor for the dataset
+    :param dataloader_cls: class constructor for data loader
+    :return: two DataLoaders, one for training and another for validation
+    """
+    n_cells = xs[0].shape[0]
 
-    dataset = TensorTargetDataset(*xs)
+    example_indices = np.random.permutation(n_cells)
+    example_labels = labels[example_indices]
+    n_train = int(train_p * n_cells)
 
-    data_loader_train = DataLoader2D(
+    dataset = dataset_cls(*xs, torch.from_numpy(labels), y)
+
+    data_loader_train = dataloader_cls(
         dataset=dataset,
-        batch_size=batch_size,
-        pin_memory=use_cuda,
-        sampler=StratifiedSubset2DSampler(example_indices[:n_train], n_classes),
+        batch_sampler=StratifiedSubsetSampler(
+            example_indices[:n_train], example_labels[:n_train], batch_size
+        ),
     )
 
-    data_loader_test = DataLoader2D(
+    data_loader_validation = dataloader_cls(
         dataset=dataset,
-        batch_size=batch_size,
-        pin_memory=use_cuda,
-        sampler=StratifiedSubset2DSampler(example_indices[n_train:], n_classes),
+        batch_sampler=StratifiedSubsetSampler(
+            example_indices[n_train:], example_labels[n_train:], batch_size
+        ),
     )
 
-    return data_loader_train, data_loader_test
+    return data_loader_train, data_loader_validation

@@ -9,7 +9,7 @@ import pyro.poutine as poutine
 import torch
 import torch.nn as nn
 
-from drvish.models.modules import Encoder, NBDecoder, _normal_prior
+from drvish.models.modules import Encoder, NBDecoder
 
 
 class NBVAE(nn.Module):
@@ -20,9 +20,9 @@ class NBVAE(nn.Module):
     :param layers: Number and size of hidden layers used for encoder and decoder NNs
     :param lib_loc: Mean for prior distribution on library scaling factor
     :param lib_scale: Scale for prior distribution on library scaling factor
-    :param dropout_rate: Dropout rate for neural networks
-    :param use_cuda: if True, copy parameters into GPU memory
-    :param eps: value to add to NB count parameter for numerical stability
+    :param scale_factor: For adjusting the ELBO loss
+    :param epsilon: Value to add to NB count parameter for numerical stability
+    :param device: If not None, tensors will be copied to cuda device
     """
 
     def __init__(
@@ -33,75 +33,58 @@ class NBVAE(nn.Module):
         layers: Sequence[int] = (64, 64, 64),
         lib_loc: float = 7.5,
         lib_scale: float = 0.5,
-        dropout_rate: float = 0.1,
-        use_cuda: bool = False,
-        eps: float = 1e-6,
+        scale_factor: float = 1.0,
+        epsilon: float = 1e-6,
+        device: torch.device = None,
     ):
         super().__init__()
-        self.encoder = Encoder(n_input, n_latent, layers, dropout_rate)
-        self.l_encoder = Encoder(n_input, 1, layers, dropout_rate)
-        self.decoder = NBDecoder(n_latent, n_input, layers[::-1], dropout_rate)
+        self.encoder = Encoder(n_input, n_latent, layers)
+        self.decoder = NBDecoder(n_latent, n_input, layers[::-1])
 
-        self.eps = torch.tensor(eps, requires_grad=False)
+        self.epsilon = torch.tensor(epsilon).to(device)
 
-        self.z_prior = _normal_prior(0.0, 1.0, 1, n_latent, use_cuda=use_cuda)
-        self.l_prior = _normal_prior(lib_loc, lib_scale, 1, 1, use_cuda=use_cuda)
+        self.l_loc = torch.tensor(lib_loc).to(device)
+        self.l_scale = lib_scale * torch.ones(1, device=device)
 
-        if use_cuda:
+        if device is not None:
             # calling cuda() here will put all the parameters of
             # the encoder and decoder networks into gpu memory
-            self.cuda()
+            self.cuda(device)
 
-        self.use_cuda = use_cuda
         self.n_latent = n_latent
+        self.scale_factor = scale_factor
 
-    def model(self, x: torch.Tensor, af: torch.Tensor):
-        # register PyTorch module `decoder` with Pyro
-        pyro.module("decoder", self.decoder)
+    def model(self, x: torch.Tensor):
+        # register modules with Pyro
+        pyro.module("nbvae", self)
 
-        with pyro.plate("data"):
-            with poutine.scale(scale=af):
-                z = pyro.sample(
-                    "latent",
-                    self.z_prior.expand(
-                        torch.Size((x.size(0), self.n_latent))
-                    ).to_event(1),
-                )
-                l = pyro.sample(
-                    "library",
-                    self.l_prior.expand(torch.Size((x.size(0), 1))).to_event(1),
-                )
+        with pyro.plate("data", len(x)), poutine.scale(scale=self.scale_factor):
+            z = pyro.sample(
+                "latent", dist.Normal(0, x.new_ones(self.n_latent)).to_event(1)
+            )
+
+            l = pyro.sample(
+                "library", dist.Normal(self.l_loc, self.l_scale).to_event(1)
+            )
 
             log_r, logit = self.decoder(z, l)
 
             pyro.sample(
                 "obs",
                 dist.NegativeBinomial(
-                    total_count=torch.exp(log_r) + self.eps,
-                    logits=logit,
-                    validate_args=True,
+                    total_count=torch.exp(log_r) + self.epsilon, logits=logit
                 ).to_event(1),
                 obs=x,
             )
 
     # define the guide (i.e. variational distribution) q(z|x)
-    def guide(self, x: torch.Tensor, af: torch.Tensor):
-        # register PyTorch module `encoder` with Pyro
-        pyro.module("encoder", self.encoder)
-        pyro.module("l_encoder", self.l_encoder)
+    def guide(self, x: torch.Tensor):
+        pyro.module("nbvae", self)
 
-        with pyro.plate("data"):
+        with pyro.plate("data", len(x)), poutine.scale(scale=self.scale_factor):
             # use the encoder to get the parameters used to define q(z|x)
-            z_loc, z_scale = self.encoder(x)
-            l_loc, l_scale = self.l_encoder(x)
+            z_loc, z_scale, l_loc, l_scale = self.encoder(x)
 
             # sample the latent code z
-            with poutine.scale(scale=af):
-                pyro.sample(
-                    "latent",
-                    dist.Normal(z_loc, z_scale, validate_args=True).to_event(1),
-                )
-                pyro.sample(
-                    "library",
-                    dist.Normal(l_loc, l_scale, validate_args=True).to_event(1),
-                )
+            pyro.sample("latent", dist.Normal(z_loc, z_scale).to_event(1))
+            pyro.sample("library", dist.Normal(l_loc, l_scale).to_event(1))
