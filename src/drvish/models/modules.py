@@ -118,8 +118,12 @@ class LinearMultiBias(PyroModule):
         n_conditions: int,
         lam_scale: float,
         bias_scale: float,
+        alpha: float = 1.0,
     ):
         super().__init__()
+
+        # weight on monotonic constraint
+        self.alpha = alpha
 
         # priors
         self.weight = PyroSample(
@@ -177,6 +181,10 @@ class LinearMultiBias(PyroModule):
         pyro.sample(
             "weight", dist.Normal(self.weight_loc, self.weight_scale).to_event(2)
         )
-        pyro.sample(
+        bias = pyro.sample(
             "bias", dist.Normal(self.bias_loc, self.bias_scale).to_event(2)
+        )
+        pyro.factor(
+            "monotonic_bias",
+            -self.alpha * torch.clamp(bias[:-1,:] - bias[1:,:], 0, None).sum()
         )

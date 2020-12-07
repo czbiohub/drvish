@@ -103,7 +103,9 @@ class DRNBVAE(nn.Module):
 
         mean_dr_logit = self.lmb(z, labels)
         pyro.sample(
-            "drs", dist.Normal(loc=mean_dr_logit, scale=self.sigma_scale), obs=y
+            "drs",
+            dist.Normal(loc=mean_dr_logit, scale=self.sigma_scale).to_event(2),
+            obs=y,
         )
 
     # define the guide (i.e. variational distribution) q(z|x)
