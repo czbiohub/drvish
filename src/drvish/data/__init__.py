@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from typing import Type
+from typing import List, Type
 
 import numpy as np
 
@@ -88,7 +88,7 @@ def split_dataset(
 def split_labeled_dataset(
     *xs: torch.Tensor,
     labels: np.ndarray,
-    y: torch.Tensor,
+    y: List[torch.Tensor],
     batch_size: int,
     train_p: float,
     dataset_cls: Type[Dataset] = TensorTargetDataset,

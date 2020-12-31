@@ -1,8 +1,9 @@
-from typing import Sequence
+from typing import List, Sequence
 
 import pyro
 import pyro.distributions as dist
 import pyro.poutine as poutine
+from pyro.nn import PyroModule
 
 import torch
 import torch.nn as nn
@@ -37,7 +38,7 @@ class DRNBVAE(nn.Module):
         n_input: int,
         n_classes: int,
         n_drugs: int,
-        n_conditions: int,
+        n_conditions: Sequence[int],
         n_latent: int = 8,
         layers: Sequence[int] = (64, 64, 64),
         lib_loc: float = 7.5,
@@ -54,12 +55,17 @@ class DRNBVAE(nn.Module):
         self.encoder = Encoder(n_input, n_latent, layers)
         self.decoder = NBDecoder(n_latent, n_input, layers[::-1])
 
-        self.lmb = LinearMultiBias(
-            n_latent,
-            n_drugs,
-            n_conditions,
-            torch.tensor(lam_scale).to(device),
-            torch.tensor(bias_scale).to(device)
+        self.lmb_list = PyroModule[nn.ModuleList](
+            [
+                LinearMultiBias(
+                    n_latent,
+                    1,
+                    n_conditions[i],
+                    torch.tensor(lam_scale).to(device),
+                    torch.tensor(bias_scale).to(device),
+                )
+                for i in range(n_drugs)
+            ]
         )
 
         self.epsilon = torch.tensor(epsilon).to(device)
@@ -78,7 +84,7 @@ class DRNBVAE(nn.Module):
         self.scale_factor = scale_factor
 
     # define the model p(x|z)p(z)
-    def model(self, x: torch.Tensor, labels: torch.Tensor, y: torch.Tensor):
+    def model(self, x: torch.Tensor, labels: torch.Tensor, y: List[torch.Tensor]):
         # register modules with Pyro
         pyro.module("drnbvae", self)
 
@@ -101,15 +107,16 @@ class DRNBVAE(nn.Module):
                 obs=x,
             )
 
-        mean_dr_logit = self.lmb(z, labels)
-        pyro.sample(
-            "drs",
-            dist.Normal(loc=mean_dr_logit, scale=self.sigma_scale).to_event(2),
-            obs=y,
-        )
+        for i, lmb in enumerate(self.lmb_list):
+            mean_dr_logit = lmb(z, labels)
+            pyro.sample(
+                f"drs_{i}",
+                dist.Normal(loc=mean_dr_logit, scale=self.sigma_scale).to_event(2),
+                obs=y[i],
+            )
 
     # define the guide (i.e. variational distribution) q(z|x)
-    def guide(self, x: torch.Tensor, labels: torch.Tensor, y: torch.Tensor):
+    def guide(self, x: torch.Tensor, labels: torch.Tensor, y: List[torch.Tensor]):
         # register modules with Pyro
         pyro.module("drnbvae", self)
 
@@ -121,4 +128,5 @@ class DRNBVAE(nn.Module):
             pyro.sample("latent", dist.Normal(z_loc, z_scale).to_event(1))
             pyro.sample("library", dist.Normal(l_loc, l_scale).to_event(1))
 
-        self.lmb.sample_guide()
+        for lmb in self.lmb_list:
+            lmb.sample_guide()

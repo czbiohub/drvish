@@ -109,6 +109,7 @@ class LinearMultiBias(PyroModule):
     :param n_conditions: The dimensionality of the bias vector (e.g. number of doses)
     :param lam_scale: Scale for the Laplace prior on weights
     :param bias_scale: Scale for the Normal prior on biases
+    :param alpha: Scaling factor for penalty factor on biases, which should be monotonic
     """
 
     def __init__(
@@ -126,10 +127,10 @@ class LinearMultiBias(PyroModule):
         self.alpha = alpha
 
         # priors
-        self.weight = PyroSample(
+        self.weight_p = PyroSample(
             dist.Laplace(0., lam_scale).expand([n_input, n_targets]).to_event(2)
         )
-        self.bias = PyroSample(
+        self.bias_p = PyroSample(
             dist.Normal(0., bias_scale).expand([n_conditions, n_targets]).to_event(2)
         )
 
@@ -145,6 +146,14 @@ class LinearMultiBias(PyroModule):
         )
         self.bias_scale = PyroParam(
             torch.ones(n_conditions, n_targets), constraint=constraints.positive
+        )
+
+        # guide
+        self.weight = PyroSample(
+            lambda s: dist.Laplace(s.weight_loc, s.weight_scale).to_event(2)
+        )
+        self.bias = PyroSample(
+            lambda s: dist.Normal(s.bias_loc, s.bias_scale).to_event(2)
         )
 
     @staticmethod
@@ -171,20 +180,17 @@ class LinearMultiBias(PyroModule):
         return torch.logit(res / labels_count.float().view(-1, 1, 1), eps=1e-5)
 
     def forward(self, x: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        return self.logit_mean_sigmoid(x, self.weight, self.bias, labels)
+        return self.logit_mean_sigmoid(x, self.weight_p, self.bias_p, labels)
 
     def calc_response(self, x: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """This is the same as the forward method but will not sample weights"""
         return self.logit_mean_sigmoid(x, self.weight_loc, self.bias_loc, labels)
 
     def sample_guide(self):
-        pyro.sample(
-            "weight", dist.Normal(self.weight_loc, self.weight_scale).to_event(2)
-        )
-        bias = pyro.sample(
-            "bias", dist.Normal(self.bias_loc, self.bias_scale).to_event(2)
-        )
+        _ = self.weight
+        bias = self.bias
+
         pyro.factor(
-            "monotonic_bias",
+            f"{self._pyro_name}.monotonic_bias",
             -self.alpha * torch.clamp(bias[:-1,:] - bias[1:,:], 0, None).sum()
         )
